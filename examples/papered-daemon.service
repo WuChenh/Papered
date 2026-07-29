@@ -1,0 +1,15 @@
+[Unit]
+Description=Papered daemon — semantic search & RAG engine
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/papered-daemon
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:%h/.local/share/papered/daemon.log
+StandardError=append:%h/.local/share/papered/daemon.log
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target

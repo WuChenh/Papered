@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "papered": {
+      "command": "/path/to/papered-daemon",
+      "args": ["--stdio"],
+      "env": { "RUST_LOG": "info" }
+    }
+  }
+}

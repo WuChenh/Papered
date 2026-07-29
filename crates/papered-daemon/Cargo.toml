@@ -1,0 +1,42 @@
+[package]
+name = "papered-daemon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Papered background daemon — HTTP API and MCP server"
+
+[[bin]]
+name = "papered-daemon"
+path = "src/main.rs"
+
+
+[dependencies]
+papered = { path = "../papered" }
+papered-mcp = { path = "../papered-mcp" }
+tokio = { workspace = true, features = ["signal"] }
+tokio-util = { workspace = true }
+axum = { workspace = true, features = ["multipart"] }
+tower-http = { workspace = true, features = ["limit"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dirs = { workspace = true }
+reqwest = { workspace = true }
+notify = "6"
+tokio-stream = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+rust-embed = "8"
+rfd = "0.15"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

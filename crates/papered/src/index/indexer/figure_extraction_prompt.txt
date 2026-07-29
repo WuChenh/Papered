@@ -1,0 +1,17 @@
+Extract every figure whose caption appears in the following academic paper. Return ONLY a valid JSON object with a single key "figures" containing an array of figure objects.
+
+Each figure object must have:
+- label: The figure's exact label as written — "1" for "Figure 1", "S1" for "Figure S1", "3a" for "Figure 3a", "graphical_abstract" for an unnumbered abstract figure. For extended-data or supplementary figures keep the full label as written ("Extended Data Fig. 1", "Supplementary Figure S2") so they stay distinct from main figures with the same number.
+- caption: The figure's full caption text, copied VERBATIM from the paper text below — character for character, only cleaned of LaTeX/HTML/Unicode formatting. The caption is the text that directly follows the figure label ("Fig. 3 |", "Figure 3.", "Figure 3:"). Never paraphrase, summarize, or rewrite it; never substitute section headings or your own knowledge of the paper for caption text. If the caption text is not present in the paper text below, omit the figure.
+
+Important:
+- Only include figures whose caption text is present in the paper. If a figure is merely cross-referenced in the body (e.g. "see Figure S2") but its caption does not appear anywhere, omit it — that figure is not actually contained in this document.
+- Always include the paper's graphical abstract (if present) with label "graphical_abstract", even when it appears before the numbered figures.
+- Only actual figures — skip icons, logos, equations, decorative images.
+- Return empty array if none.
+
+Example:
+{"figures":[{"label":"graphical_abstract","caption":"Graphical abstract"},{"label":"1","caption":"Overview of the proposed framework."},{"label":"S1","caption":"Supplementary data for experiment A."}]}
+
+Paper text:
+{truncated_text}

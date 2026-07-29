@@ -1,0 +1,24 @@
+[package]
+name = "papered-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP Server implementation for Papered with Streamable HTTP transport"
+
+[lib]
+name = "papered_mcp"
+path = "src/lib.rs"
+
+[dependencies]
+papered = { path = "../papered", features = ["schemars"] }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

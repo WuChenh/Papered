@@ -1,0 +1,62 @@
+You are an expert academic research assistant. Analyze the following academic paper and output ALL requested information in a SINGLE valid JSON object.
+
+## Paper Type -> Sections Mapping
+
+The following table specifies which sections are applicable to each paper type.
+If a section is marked as "skip", return an empty string "" for that field.
+DO NOT omit the key.
+
+paper_type          | abstract | problem | core_contribution | key_insight | methodology | experimental_design | key_findings | related_work | application | limitations
+--------------------|----------|---------|-------------------|-------------|-------------|---------------------|--------------|--------------|-------------|------------
+research_article    | extract  | extract | extract           | extract     | extract     | extract             | extract      | extract      | extract     | extract
+review              | extract  | extract | extract           | extract     | extract     | skip                | extract      | extract      | skip        | extract
+survey              | extract  | extract | extract           | extract     | extract     | skip                | extract      | extract      | skip        | extract
+meta_analysis       | extract  | extract | extract           | extract     | extract     | skip                | extract      | skip         | skip        | extract
+position_paper      | extract  | extract | extract           | extract     | skip        | skip                | skip         | extract      | extract     | extract
+case_study          | extract  | extract | extract           | extract     | extract     | extract             | extract      | extract      | extract     | extract
+dataset_paper       | extract  | extract | extract           | skip        | extract     | extract             | extract      | skip         | extract     | extract
+tutorial            | extract  | extract | extract           | skip        | extract     | skip                | skip         | skip         | extract     | skip
+technical_report    | extract  | extract | extract           | extract     | extract     | extract             | extract      | extract      | extract     | extract
+other               | extract  | extract | extract           | extract     | extract     | extract             | extract      | extract      | extract     | extract
+
+## Part 1: Bibliographic Metadata
+Extract all available bibliographic information:
+- title: Full clean title without formatting markers or line breaks.
+- authors: Array of author names as strings (e.g. ["Alice Smith", "Bob Jones"]).
+- affiliations: Array of full institutional names (universities, departments, labs, companies).
+- emails: Array of author email addresses. Exclude editorial/journal contact emails (domains like nature.com, science.org, springer.com, elsevier.com, ieee.org, cell.com, pnas.org, aaas.org).
+- corresponding_author: Array of names of corresponding authors (e.g. ["Alice Smith", "Bob Jones"]). Empty array if none.
+- published_date: Publication date in YYYY-MM-DD, YYYY-MM, or YYYY format if available.
+- doi: DOI string if present.
+- venue: Journal name, conference name, or institutional publisher.
+- keywords: Array of 5-10 subject keywords generated from the paper content. Use precise, domain-specific English terminology based on the actual methodology and domain. For non-English papers, include both original-language keywords AND their English equivalents (typically 8-15 total entries). Generate these even if the paper does not explicitly list keyword terms.
+- urls: Array of URLs explicitly mentioned in the paper text (project pages, code repositories, dataset links, supplementary material). Only real URLs, no invention.
+- data_availability: The data/code availability statement if present (e.g. RNA-seq data deposited at GEO: GSE123456).
+- paper_type: One of research_article, review, survey, meta_analysis, tutorial, position_paper, case_study, dataset_paper, technical_report, or other.
+- extra: Flat JSON object with additional metadata: publisher, volume, issue, pages, page_count, license, funding, orcid (array), isbn, issn, degree, department. Only include keys with actual values.
+
+## Part 2: Semantic Sections
+Extract each section as a concise summary (100-500 words) following the section applicability table above.
+For biology/bioinformatics papers, include: species/organism names, gene/protein names, experimental techniques (RNA-seq, ChIP-seq, CRISPR, etc.), biological pathways, and disease/condition names within the relevant section fields.
+
+## Part 3: Bio-entities (structured extraction)
+Extract canonical names mentioned in the paper as four string arrays:
+- species: Organism/species names (e.g. ["Oryza sativa", "Mus musculus"]).
+- genes: Gene or protein symbols/names exactly as written in the paper (e.g. ["OsALS", "ROD1", "TP53"]). Preserve the paper's capitalization.
+- techniques: Experimental techniques and assays (e.g. ["RNA-seq", "STARR-seq", "CRISPR"]).
+- pathways: Biological pathways and processes (e.g. ["MAPK signaling", "photorespiration"]).
+Only include entities explicitly mentioned in the text — never invent or infer them. Return an empty array for any category with no mentions; non-biology papers return empty arrays for all four.
+
+## Rules
+- Return ONLY a valid JSON object, no markdown code blocks, no explanation.
+- Use the same language as the paper text for all fields EXCEPT keywords (always include English).
+- For empty/unknown fields: use empty string for strings, empty array for arrays, null for optionals.
+- Clean up LaTeX markup, HTML tags, Unicode superscripts, and footnote numbers from ALL fields.
+
+## Reference Metadata
+Current paper: "{title}" by {authors} (year: {year})
+
+Paper text:
+{truncated_text}
+
+Respond with JSON only:

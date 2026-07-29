@@ -1,0 +1,57 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Chenhua Wu"]
+license = "Apache-2.0"
+repository = "https://github.com/WuChenh/papered"
+
+[workspace.dependencies]
+tokio = { version = "1.52", features = [
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "net",
+    "io-std",
+    "fs",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+axum = { version = "0.8" }
+tower-http = { version = "0.6", features = ["cors", "timeout"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6.0"
+uuid = { version = "1.16", features = ["v4", "serde"] }
+walkdir = "2.5"
+tokio-stream = { version = "0.1" }
+tokio-util = "0.7"
+turso = "0.7.0"
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "rustls",
+] }
+rmcp = { version = "2.2", features = [
+    "server",
+    "transport-streamable-http-server",
+    "transport-io",
+] }
+schemars = "1"
+strum = { version = "0.27", features = ["derive"] }
+async-trait = "0.1"
+futures-util = "0.3"
+
+[workspace.lints.clippy]
+uninlined_format_args = "warn"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+opt-level = 3

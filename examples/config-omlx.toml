@@ -1,0 +1,22 @@
+[providers.omlx]
+api_base = "http://localhost:8000/v1"
+api_key = "your-omlx-api-key"
+
+[models.qwen3-5-4b-mlx-4bit]
+provider = "omlx"
+model = "Qwen3.5-4B-MLX-4bit"
+
+[models.qwen3-vl-embedding-2b-8bit]
+provider = "omlx"
+model = "Qwen3-VL-Embedding-2B-8bit"
+
+[models.qwen3-vl-reranker-2b-8bit]
+provider = "omlx"
+model = "Qwen3-VL-Reranker-2B-8bit"
+
+[purposes]
+embedding = "qwen3-vl-embedding-2b-8bit"
+reranker = "qwen3-vl-reranker-2b-8bit"
+section = "qwen3-5-4b-mlx-4bit"
+rag = "qwen3-5-4b-mlx-4bit"
+enhancement = "qwen3-5-4b-mlx-4bit"

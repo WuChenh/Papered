@@ -1,0 +1,38 @@
+# Minimal papered config — copy to ~/.config/papered/config.toml and set your API keys.
+
+[providers.siliconflow]
+api_base = "https://api.siliconflow.cn/v1"
+api_key = "sk-your-key"
+
+[providers.deepseek]
+api_base = "https://api.deepseek.com"
+api_key = "sk-your-key"
+
+[models.deepseek-v4-flash]
+provider = "deepseek"
+model = "deepseek-v4-flash"
+context_window = 1000000
+max_output_tokens = 384000
+
+[models.qwen3-6-35b-a3b]
+provider = "siliconflow"
+model = "Qwen/Qwen3.6-35B-A3B"
+context_window = 256000
+max_output_tokens = 65536
+concurrency = 0
+rpm = 1000
+tpm = 40000
+
+[models.qwen3-vl-embedding-8b]
+provider = "siliconflow"
+model = "Qwen/Qwen3-VL-Embedding-8B"
+
+[models.qwen3-vl-reranker-8b]
+provider = "siliconflow"
+model = "Qwen/Qwen3-VL-Reranker-8B"
+
+[purposes]
+embedding = "qwen3-vl-embedding-8b"
+reranker = "qwen3-vl-reranker-8b"
+section = "deepseek-v4-flash"
+rag = "deepseek-v4-flash"

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Papered</title>
+  <script src="boot.js?v=1"></script>
+  <link rel="stylesheet" href="style.css?v=1">
+  <link rel="stylesheet" href="js/vendor/katex.min.css?v=1">
+</head>
+<body>
+  <a class="skip-link" href="#app">Skip to content</a>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar" aria-label="Main navigation">
+      <a class="brand" href="#/">
+        <span>Papered</span>
+      </a>
+      <div class="nav-section">Library</div>
+      <a class="nav-item" href="#/" data-nav="/"><span data-icon="dashboard"></span>Dashboard</a>
+      <a class="nav-item" href="#/library" data-nav="/library"><span data-icon="library"></span>Papers</a>
+      <a class="nav-item" href="#/search" data-nav="/search"><span data-icon="search"></span>Search</a>
+      <a class="nav-item" href="#/graph" data-nav="/graph"><span data-icon="network"></span>Graph</a>
+      <div class="nav-section">Research</div>
+      <a class="nav-item" href="#/ask" data-nav="/ask"><span data-icon="ask"></span>Ask</a>
+      <a class="nav-item" href="#/prompts" data-nav="/prompts"><span data-icon="prompts"></span>Prompts</a>
+      <div class="nav-section">Manage</div>
+      <a class="nav-item" href="#/sync" data-nav="/sync"><span data-icon="sync"></span>Sync</a>
+      <a class="nav-item" href="#/health" data-nav="/health"><span data-icon="health"></span>Health</a>
+      <div class="sidebar-foot">
+        <a class="nav-item" href="#/settings" data-nav="/settings"><span data-icon="settings"></span>Settings</a>
+      </div>
+    </nav>
+    <div class="main-col">
+      <header class="topbar">
+        <button id="sidebar-toggle" class="icon-btn sidebar-toggle" type="button" aria-label="Menu" aria-expanded="false" aria-controls="sidebar">☰</button>
+        <span class="topbar-title" id="topbar-title">Dashboard</span>
+        <span class="topbar-spacer"></span>
+        <button id="appearance-btn" class="icon-btn bordered" type="button" aria-label="Appearance" aria-haspopup="dialog" aria-expanded="false" aria-controls="appearance-popover" title="Appearance">Aa</button>
+      </header>
+      <div id="appearance-popover" class="popover hidden" role="dialog" aria-label="Appearance">
+        <div class="popover-row">
+          <span class="popover-label" id="theme-label">Theme</span>
+          <div class="segmented" role="group" aria-labelledby="theme-label">
+            <button type="button" data-theme-choice="auto">Auto</button>
+            <button type="button" data-theme-choice="light">Light</button>
+            <button type="button" data-theme-choice="dark">Dark</button>
+          </div>
+        </div>
+        <div class="popover-row">
+          <span class="popover-label" id="font-label">Reading</span>
+          <div class="segmented" role="group" aria-labelledby="font-label">
+            <button type="button" data-font-choice="serif">Serif</button>
+            <button type="button" data-font-choice="sans">Sans</button>
+          </div>
+        </div>
+      </div>
+      <main id="app" class="content" tabindex="-1"></main>
+    </div>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+  <script type="module" src="js/app.js?v=1"></script>
+</body>
+</html>

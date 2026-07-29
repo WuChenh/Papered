@@ -1,0 +1,153 @@
+# ~/.config/papered/config.toml
+
+data_dir = "/Users/<you>/Library/Application Support/papered"
+log_level = "info"          # trace | debug | info | warn | error
+
+[providers.siliconflow]
+api_base = "https://api.siliconflow.cn/v1"
+api_key = "sk-your-key"
+
+[providers.deepseek]
+api_base = "https://api.deepseek.com"
+api_key = "sk-your-key"
+
+# [providers.openai]
+# api_base = "https://api.openai.com/v1"
+# api_key = "sk-your-key"
+
+[models.deepseek-v4-flash]
+provider = "deepseek"
+model = "deepseek-v4-flash"
+context_window = 1000000
+max_output_tokens = 384000
+# reasoning_effort = "high"  # "high" | "max"
+concurrency = 0
+rpm = 500
+tpm = 2000000
+
+[models.qwen3-6-35b-a3b]
+provider = "siliconflow"
+model = "Qwen/Qwen3.6-35B-A3B"
+context_window = 256000
+max_output_tokens = 65536
+concurrency = 0
+rpm = 1000
+tpm = 40000
+
+[models.qwen3-vl-embedding-8b]
+provider = "siliconflow"
+model = "Qwen/Qwen3-VL-Embedding-8B"
+concurrency = 0
+rpm = 2000
+tpm = 1000000
+
+[models.qwen3-vl-reranker-8b]
+provider = "siliconflow"
+model = "Qwen/Qwen3-VL-Reranker-8B"
+concurrency = 0
+rpm = 2000
+tpm = 1000000
+
+[purposes]
+embedding = "qwen3-vl-embedding-8b"
+reranker = "qwen3-vl-reranker-8b"
+section = "deepseek-v4-flash"
+rag = "deepseek-v4-flash"
+vision = "qwen3-6-35b-a3b"
+enhancement = "deepseek-v4-flash"
+# translation = "deepseek-v4-flash"  # optional — defaults to the rag model
+
+[translation]
+target_language = "zh-CN"  # "zh-CN" | "en" | "fr" | "de" | "es" | "ru"
+
+[embedding]
+max_batch_size = 8
+
+[section]
+max_input_chars = 800000
+max_output_tokens = 131072
+
+[mineru]
+enabled = false
+mode = "precision"          # "precision" | "lightweight"
+model_version = "pipeline"  # "pipeline" | "vlm" | "MinerU-HTML"
+timeout_secs = 30
+api_key = "your-key"
+max_poll_time_secs = 600
+enable_table = true
+is_ocr = true
+enable_formula = true
+language = "ch"
+
+[reranker]
+top_n = 20
+timeout_secs = 30
+instruction = "Represent this content for retrieval"
+skip_timeout_secs = 10      # skip rerank and keep raw ANN order if the reranker does not respond within this many seconds
+
+[rag]
+max_output_tokens = 131072
+top_k = 12
+search_method = "hybrid"    # "semantic" | "fulltext" | "hybrid"
+system_prompt = """
+You are a cognitive mirror reflecting the user's thought space. Answer based ONLY on the provided research papers.
+
+Citations: the context is organized into numbered sources ("### Source 1:", "### Source 2:", ...). Cite every non-trivial claim inline with the matching source number in square brackets, e.g. [1] or [1][3]. When the context shows a "Section path:" line, you may also name the section. If the context does not contain enough information, say so clearly instead of guessing. Be concise but thorough."""
+max_context_chars = 24000
+max_paper_context_chars = 4000
+max_paper_scoped_chars = 8000
+temperature = 0.2
+use_compact_context = true
+include_meta_fields = ["title", "authors", "published_date", "venue"]
+
+[rag.enhancement]
+# Off by default. When [rag.adaptive] enabled = true, Normal and Complex queries
+# automatically enable enhancement (query rewriting + HyDE); Simple queries never use it.
+temperature = 0.3
+max_output_tokens = 16384
+
+# Adaptive retrieval: auto-tunes top_k and automatically enables enhancement
+# (query rewriting + HyDE) for Normal/Complex queries.
+[rag.adaptive]
+enabled = true
+
+[lattice_sync]
+enabled = false             # automatic background sync only; manual "Sync now" works regardless
+interval_secs = 300
+batch_limit = 50            # search page size; each cycle enumerates the full library and removes papers deleted from Lattice
+pdf_search_paths = []
+# collections = ["AI4S", "Reading List"]   # sync only these named collections; default empty = sync all collections. Papers outside selected collections will be removed from Papered.
+
+[zotero_sync]
+enabled = false             # automatic background sync only; manual "Sync now" works regardless
+interval_secs = 300
+batch_limit = 50            # page size; each cycle paginates through all matching items
+pdf_search_paths = []
+collection_keys = []
+download_pdf = true
+recursive_collections = true
+
+[indexing]
+concurrency = 8             # 1–64
+queue_size = 2048
+
+[pdf_extraction]
+artifact_threshold = 0.85
+min_image_short_side = 220
+max_image_long_side = 9000
+min_image_file_size_bytes = 16384
+max_image_file_size_bytes = 20971520  # 20 MiB
+output_max_long_side = 1600 # output image resize bound (preserves aspect ratio)
+output_quality = 85         # JPEG/WebP quality (1–100)
+output_format = "auto"      # "auto" | "jpeg" | "webp" | "png"
+extract_images = true       # set false to skip figure/table image extraction
+min_title_chars = 3
+quality_min_chars = 50
+quality_min_words = 10
+quality_min_lines = 2
+quality_min_alphanumeric_ratio = 0.40
+quality_warn_threshold = 70
+quality_reject_threshold = 30
+enable_layout_quality_signals = true
+min_chars_per_page = 20
+max_pages_warning = 5000

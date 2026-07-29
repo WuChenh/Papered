@@ -1,0 +1,6 @@
+# ~/.hermes/config.yaml
+mcp:
+  papered:
+    type: streamable_http
+    url: http://127.0.0.1:9321/mcp/v1/messages
+    enabled: true

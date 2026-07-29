@@ -1,0 +1,55 @@
+[package]
+name = "papered"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Context infrastructure for research agents and researchers: a local-first paper knowledge engine that lets AI agents query precise, grounded literature information without interrupting your flow"
+
+[lib]
+name = "papered"
+path = "src/lib.rs"
+
+[[bin]]
+name = "papered"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "env"] }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+reqwest = { workspace = true, features = ["multipart"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+pdf_oxide = { version = "0.3", features = ["parallel", "rendering"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dirs = { workspace = true }
+regex = "1.11"
+chrono = { workspace = true }
+sha2 = "0.11"
+hex = "0.4"
+base64 = "0.22"
+uuid = { workspace = true }
+toml = "1.1"
+walkdir = { workspace = true }
+colored = "3.1"
+turso = { workspace = true }
+futures-util = { workspace = true }
+tempfile = "3"
+yaml_serde = "0.10"
+paste = "1"
+http = "1"
+async-trait = { workspace = true }
+indexmap = "2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "webp", "png"] }
+docx-rs = { version = "0.4", default-features = false }
+schemars = { workspace = true, optional = true }
+strum = { workspace = true }
+
+[features]
+default = []
+schemars = ["dep:schemars"]

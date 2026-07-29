@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "papered": {
+      "type": "remote",
+      "url": "http://127.0.0.1:9321/mcp/v1/messages",
+      "enabled": true
+    }
+  }
+}

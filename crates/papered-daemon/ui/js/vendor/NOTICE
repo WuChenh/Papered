@@ -1,0 +1,17 @@
+Third-party libraries vendored in this directory
+=================================================
+
+marked (v18)
+  License: MIT
+  Copyright (c) 2018+, markedjs contributors
+  https://github.com/markedjs/marked
+
+KaTeX (v0.18)
+  License: MIT (including fonts)
+  Copyright (c) 2013-2020 Khan Academy and other contributors
+  https://github.com/KaTeX/KaTeX
+
+DOMPurify (v3.4)
+  License: Apache-2.0 OR MPL-2.0 (dual-licensed; used under Apache-2.0)
+  Copyright (c) 2015-2025 Cure53 and other contributors
+  https://github.com/cure53/DOMPurify
