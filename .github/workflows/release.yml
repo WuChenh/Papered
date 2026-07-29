@@ -30,9 +30,6 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             archive: tar.gz
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-latest
-            archive: tar.gz
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             archive: zip
@@ -60,36 +57,14 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
-      # Linux system dependencies (GTK3 for rfd file dialog)
       - name: Install Linux system dependencies
-        if: startsWith(matrix.target, 'x86_64-unknown-linux-gnu')
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev
 
-      # Linux aarch64 cross-compilation toolchain
-      # note: papered-daemon is skipped on ARM64 (depends on rfd/GTK3)
-      - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Configure linker (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          mkdir -p .cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
-
       - name: Build release binaries
-        run: |
-          cargo build --release --locked --target ${{ matrix.target }} -p papered
-          if [ "${{ matrix.target }}" != "aarch64-unknown-linux-gnu" ]; then
-            cargo build --release --locked --target ${{ matrix.target }} -p papered-daemon
-          else
-            echo "::warning::Skipping papered-daemon on ARM64 (no GTK3 cross-build support)"
-          fi
+        run: cargo build --release --locked --target ${{ matrix.target }} -p papered -p papered-daemon
 
       # --- Package (Unix: tar.gz) ---
       - name: Package (tar.gz)
@@ -102,9 +77,7 @@ jobs:
           name="papered-${TAG}-${TARGET}"
           mkdir -p "dist/${name}"
           cp "target/${TARGET}/release/papered" "dist/${name}/"
-          if [ -f "target/${TARGET}/release/papered-daemon" ]; then
-            cp "target/${TARGET}/release/papered-daemon" "dist/${name}/"
-          fi
+          cp "target/${TARGET}/release/papered-daemon" "dist/${name}/"
           cp README.md LICENSE "dist/${name}/"
           tar -czf "dist/${name}.tar.gz" -C dist "${name}"
           echo "ASSET=dist/${name}.tar.gz" >> "$GITHUB_ENV"
