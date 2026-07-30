@@ -126,6 +126,7 @@ The daemon exposes a JSON REST API on `http://127.0.0.1:9321` by default. If tha
 | `GET` | `/api/v1/papers/{id}/comments` | List comments, oldest first |
 | `POST` | `/api/v1/papers/{id}/comments` | Add a comment (`{ content }`, non-empty, ≤ 4000 characters — 400 above that) |
 | `DELETE` | `/api/v1/papers/{id}/comments/{comment_id}` | Delete a comment |
+| `POST` | `/api/v1/papers/{id}/insights` | Generate an LLM insight/critique/inspiration draft for the paper (`{ insight }`); uses the `rag` purpose model, nothing is stored |
 | `POST` | `/api/v1/papers/{id}/translate` | Translate one content item (`{ target_language, content_type, content_ref }`); returns cached result when the source is unchanged |
 | `POST` | `/api/v1/papers/{id}/translate/batch` | Batch-translate content; with an empty `items` list it auto-collects title + abstract + sections + figure captions |
 | `GET` | `/api/v1/papers/{id}/translations` | List a paper's translations (`?lang=zh-CN`) |
@@ -134,6 +135,7 @@ The daemon exposes a JSON REST API on `http://127.0.0.1:9321` by default. If tha
 | `POST` | `/api/v1/search` | Semantic/fulltext/hybrid paper search |
 | `POST` | `/api/v1/search/figures` | Semantic figure search |
 | `POST` | `/api/v1/similar` | Find similar papers by paper_id |
+| `GET` | `/api/v1/graph` | Paper relatedness graph (`?limit=200&max_edges_per_node=5&focus=<paper_id>`); `focus` force-includes a located paper with its strongest library-wide neighbors when it would be absent or isolated in the most-recent slice |
 | `POST` | `/api/v1/ask` | RAG Q&A with citations |
 | `GET` | `/api/v1/prompts` | List RAG prompts |
 | `GET` | `/api/v1/prompts/{id}` | Get prompt by ID |

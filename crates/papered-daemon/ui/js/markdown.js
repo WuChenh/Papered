@@ -2,10 +2,10 @@
 // Pipeline: protect code → extract math → marked → DOMPurify → KaTeX.
 // Vendor libs are embedded alongside this file (no CDN, works offline).
 
-import { marked } from './vendor/marked.esm.js?v=1';
-import katex from './vendor/katex.mjs?v=1';
-import DOMPurify from './vendor/purify.es.mjs?v=1';
-import { esc } from './util.js?v=1';
+import { marked } from './vendor/marked.esm.js?v=2';
+import katex from './vendor/katex.mjs?v=2';
+import DOMPurify from './vendor/purify.es.mjs?v=2';
+import { esc } from './util.js?v=2';
 
 // ---- configuration ----------------------------------------------------------
 

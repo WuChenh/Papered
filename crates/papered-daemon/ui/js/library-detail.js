@@ -1,11 +1,11 @@
 // Paper detail view (#/paper/:id) — sections, figures, metadata, translations.
 // ES module — routes self-register on import via app.js.
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
-import { navigate } from './router.js?v=1';
-import { renderMarkdown } from './markdown.js?v=1';
-import { wireCoverFallback, wireModalLinks, lastModal } from './library.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
+import { navigate } from './router.js?v=2';
+import { renderMarkdown } from './markdown.js?v=2';
+import { wireCoverFallback, wireModalLinks, lastModal } from './library.js?v=2';
 
 const POLL_MS = 3000;
 
@@ -219,6 +219,8 @@ function renderPaper(container, ctx) {
       '<textarea class="textarea" id="comment-input" rows="2" ' +
       'placeholder="Add a note about this paper…"></textarea>' +
       '<div class="row mt-2"><span class="spacer"></span>' +
+      '<button type="button" class="btn subtle sm" id="comment-insight" ' +
+      'title="Draft an AI insight / critique / inspiration into the box">🤔</button>' +
       '<button type="button" class="btn primary sm" id="comment-add">Add note</button></div>' +
       '</div>';
     el.querySelectorAll('[data-del-comment]').forEach((btn) => {
@@ -228,6 +230,19 @@ function renderPaper(container, ctx) {
           U.toast('Note deleted', 'success');
           loadComments();
         }).catch(U.handleApiError);
+      });
+    });
+    el.querySelector('#comment-insight').addEventListener('click', () => {
+      const btn = el.querySelector('#comment-insight');
+      const input = el.querySelector('#comment-input');
+      btn.disabled = true;
+      btn.textContent = '⏳';
+      API.generateInsight(id).then((r) => {
+        input.value = (r && r.insight ? r.insight : '').trim();
+        input.focus();
+      }).catch(U.handleApiError).finally(() => {
+        btn.disabled = false;
+        btn.textContent = '🤔';
       });
     });
     el.querySelector('#comment-add').addEventListener('click', () => {
@@ -839,6 +854,6 @@ function renderPaper(container, ctx) {
   };
 }
 
-import { route } from './router.js?v=1';
+import { route } from './router.js?v=2';
 route('/paper/:id', { title: 'Paper', render: renderPaper });
 route('/paper/:id/chunk/:chunkId', { title: 'Paper', render: renderPaper });

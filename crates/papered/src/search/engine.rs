@@ -5,7 +5,7 @@ use crate::llm::reranker::RerankerClient;
 use crate::paper::section::SectionType;
 use crate::paper::{MatchedSection, Paper, PaperSearchResult, PaperStatus};
 use crate::search::SearchMethod;
-use crate::search::graph::{PaperGraph, build_paper_graph};
+use crate::search::graph::{PaperGraph, build_paper_graph, relatedness_edge};
 use crate::search::query_analyzer::{QueryComplexity, QueryProfile};
 use crate::store::vector::VectorStore;
 use crate::util::str_enum::StrLabel;
@@ -357,7 +357,17 @@ impl SearchEngine {
     /// computes keyword-overlap + shared-entity similarity edges.
     /// `max_edges_per_node` caps each node's degree so the rendered network
     /// stays readable for large libraries.
-    pub async fn paper_graph(&self, limit: usize, max_edges_per_node: usize) -> Result<PaperGraph> {
+    ///
+    /// `focus` names a paper the user explicitly located (graph-view search):
+    /// when it sits outside the most-recent slice or would be an isolated dot
+    /// inside it, its strongest neighbors from the whole indexed library are
+    /// pulled in so the user sees real relationships, not just the node.
+    pub async fn paper_graph(
+        &self,
+        limit: usize,
+        max_edges_per_node: usize,
+        focus: Option<&str>,
+    ) -> Result<PaperGraph> {
         let (mut papers, _) = self
             .store
             .list_papers_filtered(
@@ -381,7 +391,87 @@ impl SearchEngine {
                 paper.entities = e.clone();
             }
         }
+        if let Some(focus_id) = focus {
+            self.expand_graph_focus(&mut papers, focus_id, max_edges_per_node)
+                .await?;
+        }
         Ok(build_paper_graph(&papers, max_edges_per_node))
+    }
+
+    /// Pull a user-located paper into the graph node set together with its
+    /// strongest library-wide neighbors. No-op when the paper already has at
+    /// least one edge inside the current slice, or when it is unknown / not
+    /// fully indexed.
+    async fn expand_graph_focus(
+        &self,
+        papers: &mut Vec<Paper>,
+        focus_id: &str,
+        max_edges_per_node: usize,
+    ) -> Result<()> {
+        let in_set = papers.iter().position(|p| p.id == focus_id);
+        let has_edge = in_set.is_some_and(|i| {
+            papers
+                .iter()
+                .enumerate()
+                .any(|(j, p)| j != i && relatedness_edge(&papers[i], p).is_some())
+        });
+        if in_set.is_some() && has_edge {
+            return Ok(());
+        }
+
+        let focus_paper = match in_set {
+            Some(i) => papers[i].clone(),
+            None => {
+                let mut p = match self.store.get_paper(focus_id).await? {
+                    Some(p) if p.status == PaperStatus::Indexed => p,
+                    _ => return Ok(()), // unknown or not fully indexed
+                };
+                let entities = self.store.papers_entities_batch(&[p.id.clone()]).await?;
+                if let Some(e) = entities.get(&p.id) {
+                    p.entities = e.clone();
+                }
+                p
+            }
+        };
+
+        // Rank the focus paper's neighbors across the whole indexed library —
+        // its true strongest relations may all sit outside the recent slice.
+        let (mut candidates, _) = self
+            .store
+            .list_papers_filtered(
+                Some(PaperStatus::Indexed.as_str()),
+                None,
+                None,
+                &Default::default(),
+                None,
+                true,
+                i64::MAX as usize, // no SQL LIMIT — full library scan
+                0,
+            )
+            .await?;
+        candidates.retain(|p| p.id != focus_id && !papers.iter().any(|q| q.id == p.id));
+        let ids: Vec<String> = candidates.iter().map(|p| p.id.clone()).collect();
+        let entities = self.store.papers_entities_batch(&ids).await?;
+        for p in candidates.iter_mut() {
+            if let Some(e) = entities.get(&p.id) {
+                p.entities = e.clone();
+            }
+        }
+        let mut neighbors: Vec<(f32, Paper)> = candidates
+            .into_iter()
+            .filter_map(|p| {
+                let w = relatedness_edge(&focus_paper, &p)?.weight;
+                Some((w, p))
+            })
+            .collect();
+        neighbors.sort_by(|a, b| b.0.total_cmp(&a.0));
+        neighbors.truncate(max_edges_per_node.max(1));
+
+        if in_set.is_none() {
+            papers.push(focus_paper);
+        }
+        papers.extend(neighbors.into_iter().map(|(_, p)| p));
+        Ok(())
     }
 
     async fn search_multimodal<T, F, R, B>(
@@ -1139,7 +1229,7 @@ mod tests {
     #[tokio::test]
     async fn paper_graph_includes_only_indexed_papers() {
         let engine = graph_engine().await;
-        let graph = engine.paper_graph(10, 10).await.expect("graph");
+        let graph = engine.paper_graph(10, 10, None).await.expect("graph");
         let mut ids: Vec<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
         ids.sort_unstable();
         // The processing paper (p4) must not appear; the three indexed papers
@@ -1154,11 +1244,42 @@ mod tests {
     #[tokio::test]
     async fn paper_graph_limit_keeps_most_recent() {
         let engine = graph_engine().await;
-        let graph = engine.paper_graph(2, 10).await.expect("graph");
+        let graph = engine.paper_graph(2, 10, None).await.expect("graph");
         let mut ids: Vec<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
         ids.sort_unstable();
         // p3 (1 day old) and p2 (2 days) are more recent than p1 (3 days).
         assert_eq!(ids, ["p2", "p3"], "limit must keep the most recent papers");
+    }
+
+    #[tokio::test]
+    async fn paper_graph_focus_pulls_in_out_of_slice_paper_with_neighbors() {
+        let engine = graph_engine().await;
+        // p1 is the oldest paper, outside the limit=2 slice; it shares
+        // crispr/BRCA1 with p2/p3, so focusing it must add it back WITH edges.
+        let graph = engine.paper_graph(2, 10, Some("p1")).await.expect("graph");
+        let ids: Vec<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains(&"p1"), "focus paper must be force-included");
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|e| e.source == "p1" || e.target == "p1"),
+            "focus paper must arrive with its relations, not as an isolated dot"
+        );
+    }
+
+    #[tokio::test]
+    async fn paper_graph_focus_ignores_unknown_and_unindexed() {
+        let engine = graph_engine().await;
+        // Unknown id: plain graph, no panic, no phantom node.
+        let graph = engine
+            .paper_graph(10, 10, Some("nope"))
+            .await
+            .expect("graph");
+        assert_eq!(graph.nodes.len(), 3);
+        // The processing paper (p4) is known but not indexed → excluded.
+        let graph = engine.paper_graph(10, 10, Some("p4")).await.expect("graph");
+        assert!(!graph.nodes.iter().any(|n| n.id == "p4"));
     }
 
     #[test]

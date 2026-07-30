@@ -29,6 +29,9 @@ impl DaemonClient {
         match self
             .client
             .get(self.url(crate::routes::HEALTH))
+            // Health probes must fail fast: the client default timeout (120s)
+            // would let a wedged non-daemon listener stall daemon discovery.
+            .timeout(Duration::from_secs(3))
             .send()
             .await
         {

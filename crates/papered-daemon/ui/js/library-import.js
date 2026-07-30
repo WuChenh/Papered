@@ -1,9 +1,9 @@
 // Add-paper modal (server paths + file upload + drag-and-drop).
 // Extracted from library.js — called with a `load` callback to refresh the list.
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
-import { lastModal, showBatchErrors } from './library.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
+import { lastModal, showBatchErrors } from './library.js?v=2';
 
 export function openAddModal(load) {
   const body = `

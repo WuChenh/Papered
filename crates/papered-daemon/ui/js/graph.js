@@ -3,9 +3,9 @@
 // dependency. Edge weights come from keyword overlap + shared biological
 // entities (see crates/papered/src/search/graph.rs).
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
-import { route } from './router.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
+import { route } from './router.js?v=2';
 
 // ---- module state (restored on re-entry) --------------------------------
 
@@ -23,6 +23,10 @@ let rafId = 0;           // active network animation frame
 let nodeById = new Map(); // id -> node, rebuilt on every load
 let view = null;         // active renderer handles { mode, byId, nodes, edges, nodeEls, edgeEls }
 let hoverId = null;      // timeline hover focus (link tracing without pinning)
+let foundEl = null;      // last search-located node element (pulsed)
+let foundTimer = 0;      // pending removal of the pulse class
+let libraryCache = null; // all indexed papers (light nodes), for library-wide search
+let libraryPromise = null; // in-flight library fetch (deduped)
 
 // ---- shared helpers -----------------------------------------------------
 
@@ -54,6 +58,82 @@ function connectionsOf(id) {
     .map((e) => ({ edge: e, other: nodeById.get(e.source === id ? e.target : e.source) }))
     .filter((c) => c.other)
     .sort((a, b) => b.edge.weight - a.edge.weight);
+}
+
+// ---- paper search (locate + highlight in the current view) ---------------
+
+// Case-insensitive substring match over the nodes of the loaded graph.
+// Title hits rank above venue/keyword hits; capped for the dropdown.
+function graphMatches(q) {
+  q = q.trim().toLowerCase();
+  if (!q || !state.graph || !state.graph.nodes) return [];
+  const titleHit = [], otherHit = [];
+  state.graph.nodes.forEach((n) => {
+    if ((n.title || '').toLowerCase().includes(q)) { titleHit.push(n); return; }
+    const rest = ((n.venue || '') + ' ' + (n.keywords || []).join(' ')).toLowerCase();
+    if (rest.includes(q)) otherHit.push(n);
+  });
+  return titleHit.concat(otherHit).slice(0, 8);
+}
+
+// Lazily fetch every indexed paper once so the search covers the whole
+// library, not just the slice rendered in the current view.
+function ensureLibrary() {
+  if (libraryCache) return Promise.resolve(libraryCache);
+  if (!libraryPromise) {
+    libraryPromise = API.listPapers({ limit: 1000, status: 'indexed' }).then((r) => {
+      libraryCache = ((r && r.papers) || []).map((it) => {
+        const p = it.paper || it;
+        const d = p.published_date || '';
+        const year = /^\d{4}/.test(d) ? parseInt(d.slice(0, 4), 10) : null;
+        return { id: p.id, title: p.title, venue: p.venue, year, keywords: p.keywords || [] };
+      });
+      return libraryCache;
+    }).catch(() => {
+      libraryPromise = null; // allow retry on the next keystroke
+      return [];
+    });
+  }
+  return libraryPromise;
+}
+
+// Library-wide matches that are NOT part of the current graph view.
+function libraryMatches(q, cap) {
+  q = q.trim().toLowerCase();
+  if (!q || !libraryCache || cap <= 0) return [];
+  const titleHit = [], otherHit = [];
+  libraryCache.forEach((n) => {
+    if (nodeById.has(n.id)) return;
+    if ((n.title || '').toLowerCase().includes(q)) { titleHit.push(n); return; }
+    const rest = ((n.venue || '') + ' ' + (n.keywords || []).join(' ')).toLowerCase();
+    if (rest.includes(q)) otherHit.push(n);
+  });
+  return titleHit.concat(otherHit).slice(0, cap);
+}
+
+// Pin the paper, bring it into view, and pulse it so the eye finds it.
+function locatePaper(id) {
+  const n = nodeById.get(id);
+  if (!n || !state.graph) return;
+  // Timeline mode folds the least-connected cards behind "+N more"; if the
+  // target is folded away, lift its lane's cap and re-render first.
+  if (state.mode === 'timeline' && !(view && view.nodeEls.has(id))) {
+    state.expanded.add(n.year == null ? 'n.d.' : String(n.year));
+    buildView();
+  }
+  select(id); // pins the selection + dims everything else
+  if (view && view.reveal) view.reveal(id);
+  const el = view && view.nodeEls.get(id);
+  if (el) {
+    if (foundEl) foundEl.classList.remove('found');
+    clearTimeout(foundTimer);
+    foundEl = el;
+    el.classList.add('found');
+    foundTimer = setTimeout(() => {
+      el.classList.remove('found');
+      if (foundEl === el) foundEl = null;
+    }, 2400);
+  }
 }
 
 // ---- detail panel -------------------------------------------------------
@@ -198,6 +278,14 @@ function renderNetwork(canvas, graph) {
   function applyView() {
     zoomG.setAttribute('transform', 'translate(' + vt.x + ',' + vt.y + ') scale(' + vt.k + ')');
   }
+  // Center the view on a node (graph-search locate) without changing zoom.
+  view.reveal = (id) => {
+    const n = byId.get(id);
+    if (!n) return;
+    vt.x = W / 2 - n.x * vt.k;
+    vt.y = H / 2 - n.y * vt.k;
+    applyView();
+  };
   function updatePositions() {
     edgeEls.forEach((el) => {
       const s = byId.get(el.getAttribute('data-s'));
@@ -478,6 +566,11 @@ function renderTimeline(canvas, graph) {
   canvas.querySelectorAll('.g-node').forEach((el) => nodeEls.set(el.getAttribute('data-id'), el));
   const edgeEls = Array.from(canvas.querySelectorAll('.g-edge'));
   view = { mode: 'timeline', byId, nodes: graph.nodes, edges, nodeEls, edgeEls };
+  // Scroll the card into the visible viewport (graph-search locate).
+  view.reveal = (id) => {
+    const el = nodeEls.get(id);
+    if (el) el.scrollIntoView({ block: 'center', inline: 'center' });
+  };
 
   const svg = canvas.querySelector('svg');
   svg.addEventListener('click', (e) => {
@@ -509,7 +602,7 @@ function controlsHTML() {
   const limitOpts = [50, 100, 200, 500].map((n) =>
     '<option value="' + n + '"' + (state.limit === n ? ' selected' : '') + '>' + n + '</option>'
   ).join('');
-  const degreeOpts = [2, 3, 4, 5, 8].map((n) =>
+  const degreeOpts = [2, 3, 4, 5, 8, 12, 16, 20].map((n) =>
     '<option value="' + n + '"' + (state.degree === n ? ' selected' : '') + '>' + n + '</option>'
   ).join('');
   return '<div class="card"><div class="toolbar">' +
@@ -519,6 +612,11 @@ function controlsHTML() {
     '<select class="select" id="graph-limit">' + limitOpts + '</select>' +
     '<label class="muted small nowrap" for="graph-degree">Links/paper</label>' +
     '<select class="select" id="graph-degree">' + degreeOpts + '</select>' +
+    '<div class="graph-search">' +
+    '<input type="search" class="input" id="graph-search-input" placeholder="Find a paper…" ' +
+    'autocomplete="off" aria-label="Find a paper in the graph">' +
+    '<div class="graph-search-pop" id="graph-search-pop" hidden></div>' +
+    '</div>' +
     '<span class="spacer"></span>' +
     '<span class="muted small" id="graph-stats"></span>' +
     '<button type="button" class="btn ghost sm" id="graph-refresh" title="Rebuild graph">' +
@@ -551,11 +649,11 @@ function buildView() {
   }
 }
 
-function load() {
+function load(focusId) {
   const myGen = gen;
   const canvas = document.getElementById('graph-canvas');
   if (canvas) canvas.innerHTML = U.spinner('Building graph…');
-  API.graph({ limit: state.limit, max_edges_per_node: state.degree }).then((g) => {
+  API.graph({ limit: state.limit, max_edges_per_node: state.degree, focus: focusId || undefined }).then((g) => {
     if (myGen !== gen) return;
     state.graph = g;
     state.selected = null;
@@ -567,6 +665,12 @@ function load() {
         U.fmtInt((g.edges || []).length) + ' links';
     }
     buildView();
+    // A library-search pick outside the current view lands here: the backend
+    // force-includes it (with its strongest neighbors) so we can locate it.
+    if (focusId) {
+      if (nodeById.has(focusId)) locatePaper(focusId);
+      else U.toast('Paper not found in the indexed library', 'error');
+    }
   }).catch((err) => {
     if (myGen !== gen) return;
     if (canvas) canvas.innerHTML = U.errorState(err.message, 'Retry');
@@ -594,6 +698,85 @@ function wireControls(container) {
   const degree = container.querySelector('#graph-degree');
   degree.addEventListener('change', () => { state.degree = +degree.value; load(); });
   container.querySelector('#graph-refresh').addEventListener('click', () => load());
+
+  // ---- paper search: match against the loaded graph AND the whole library ----
+  const searchInput = container.querySelector('#graph-search-input');
+  const searchPop = container.querySelector('#graph-search-pop');
+  let matches = []; // [{ n, inView }]
+  let activeIdx = -1;
+  let searchSeq = 0; // stale async library repaints bail out
+
+  function closePop() { searchPop.hidden = true; activeIdx = -1; }
+
+  function itemHTML(n, i, inView) {
+    const bits = [n.year, n.venue].filter(Boolean).map(U.esc);
+    if (!inView) bits.push('not in view');
+    const meta = bits.join(' · ');
+    return '<button type="button" class="graph-search-item' + (i === activeIdx ? ' active' : '') +
+      '" data-id="' + U.esc(n.id) + '">' +
+      '<span class="graph-search-item-title">' + U.esc(U.truncate(n.title || 'Untitled', 60)) + '</span>' +
+      (meta ? '<span class="graph-search-item-meta">' + meta + '</span>' : '') +
+      '</button>';
+  }
+
+  function renderPop(q, withLibrary) {
+    const inView = graphMatches(q);
+    const outside = withLibrary ? libraryMatches(q, 8 - inView.length) : [];
+    matches = inView.map((n) => ({ n, inView: true }))
+      .concat(outside.map((n) => ({ n, inView: false })));
+    if (!matches.length) {
+      searchPop.innerHTML = '<div class="graph-search-empty">' +
+        (withLibrary ? 'No matching paper in the library.' : 'Searching the library…') + '</div>';
+    } else {
+      searchPop.innerHTML = matches.map((m, i) => itemHTML(m.n, i, m.inView)).join('');
+      searchPop.querySelectorAll('.graph-search-item').forEach((b, i) => {
+        b.addEventListener('click', () => pick(matches[i]));
+      });
+    }
+    searchPop.hidden = false;
+  }
+
+  function paintPop() {
+    const q = searchInput.value.trim();
+    if (!q) { closePop(); return; }
+    const seq = ++searchSeq;
+    // In-view matches paint instantly; the library-wide pass repaints when
+    // the (cached) full paper list arrives.
+    renderPop(q, false);
+    ensureLibrary().then(() => {
+      if (seq !== searchSeq || searchInput.value.trim() !== q) return;
+      renderPop(q, true);
+    });
+  }
+
+  function pick(m) {
+    closePop();
+    if (!m) return;
+    // In the current view: locate directly. Outside it: reload the graph with
+    // the backend focus expansion (paper + its strongest neighbors).
+    if (m.inView && nodeById.has(m.n.id)) locatePaper(m.n.id);
+    else load(m.n.id);
+  }
+
+  searchInput.addEventListener('input', () => { activeIdx = -1; paintPop(); });
+  searchInput.addEventListener('focus', () => { if (searchInput.value.trim()) paintPop(); });
+  // Delayed so a click on a dropdown item lands before the pop closes.
+  searchInput.addEventListener('blur', () => setTimeout(closePop, 150));
+  searchInput.addEventListener('keydown', (e) => {
+    if (searchPop.hidden) return;
+    if (e.key === 'Escape') {
+      closePop();
+      searchInput.blur();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!matches.length) return;
+      activeIdx = (activeIdx + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+      paintPop();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      pick(matches[activeIdx >= 0 ? activeIdx : 0]);
+    }
+  });
 }
 
 // ---- route --------------------------------------------------------------

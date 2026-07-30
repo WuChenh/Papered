@@ -125,14 +125,9 @@ pub async fn build_engines(
     Ok((search_engine, rag_engine, indexer))
 }
 
-pub(crate) async fn init_store(
-    config: &AppConfig,
-) -> papered::error::Result<(Arc<dyn VectorStore>, bool, Option<String>)> {
+pub(crate) async fn init_store(config: &AppConfig) -> papered::error::Result<Arc<dyn VectorStore>> {
     let db_path = config.db_path();
     let store = papered::create_store(&db_path).await?;
-    let store_dim = store.store_dimension().await;
-    let placeholder_table = store_dim.is_none() || store_dim == Some(0);
-    let current_fingerprint = config.embedding_fingerprint();
 
     match store
         .get_papers_by_status(PaperStatus::Processing.as_str())
@@ -161,7 +156,7 @@ pub(crate) async fn init_store(
         }
     }
 
-    Ok((store, placeholder_table, current_fingerprint))
+    Ok(store)
 }
 
 pub(crate) async fn queue_paper_for_indexing(

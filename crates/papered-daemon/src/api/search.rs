@@ -93,7 +93,7 @@ pub async fn paper_graph(
         .search_engine
         .read()
         .await
-        .paper_graph(limit, params.max_edges_per_node)
+        .paper_graph(limit, params.max_edges_per_node, params.focus.as_deref())
         .await
         .map_err(map_err)?;
     Ok(Json(graph))

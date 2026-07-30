@@ -3,6 +3,7 @@ pub mod fs;
 pub mod image;
 pub mod macos;
 pub mod paths;
+pub mod process;
 pub mod str_enum;
 
 use std::sync::LazyLock;

@@ -1,9 +1,9 @@
 // Sync view: Zotero & Lattice sync management. Registers route('/sync').
 // Each service card renders independently — one failing never blocks the other.
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
-import { route } from './router.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
+import { route } from './router.js?v=2';
 
 // ---- shared helpers -------------------------------------------------------
 

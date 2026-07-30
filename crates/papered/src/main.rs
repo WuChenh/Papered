@@ -209,13 +209,17 @@ fn find_daemon_binary() -> Option<PathBuf> {
     None
 }
 
-async fn ensure_daemon_running() -> papered::error::Result<DaemonClient> {
-    let port = find_daemon_port();
-    let client = DaemonClient::new(format!("http://127.0.0.1:{port}"))?;
-    if client.health().await.unwrap_or(false) {
-        return Ok(client);
-    }
+/// Log file receiving the spawned daemon's stdout/stderr, so startup failures
+/// (port conflicts, database lock, config errors) stay diagnosable without
+/// rerunning the daemon in the foreground.
+fn daemon_log_file() -> PathBuf {
+    let base = papered::AppConfig::load()
+        .map(|c| c.data_dir)
+        .unwrap_or_else(|_| papered::routes::daemon_port_dir());
+    base.join("logs").join("daemon.log")
+}
 
+fn spawn_daemon() -> papered::error::Result<()> {
     let daemon_bin = find_daemon_binary()
         .ok_or_else(|| papered::PaperedError::io_other("papered-daemon binary not found. Please build it (cargo build --bin papered-daemon) or start the daemon manually."))?;
 
@@ -224,8 +228,28 @@ async fn ensure_daemon_running() -> papered::error::Result<DaemonClient> {
     let mut cmd = std::process::Command::new(&daemon_bin);
     cmd.envs(std::env::vars());
     cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
+
+    let log_file = daemon_log_file();
+    let log_target = log_file
+        .parent()
+        .and_then(|dir| std::fs::create_dir_all(dir).ok())
+        .and_then(|_| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_file)
+                .ok()
+        });
+    match log_target {
+        Some(out) => {
+            let err = out.try_clone().map_err(PaperedError::Io)?;
+            cmd.stdout(out).stderr(err);
+        }
+        None => {
+            cmd.stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+        }
+    }
 
     let _child = cmd.spawn().map_err(|e| {
         papered::PaperedError::io_other(format!(
@@ -234,19 +258,64 @@ async fn ensure_daemon_running() -> papered::error::Result<DaemonClient> {
             e
         ))
     })?;
+    Ok(())
+}
 
-    let client = DaemonClient::new(format!("http://127.0.0.1:{}", daemon_port()))?;
-    for _ in 0..60 {
+async fn ensure_daemon_running() -> papered::error::Result<DaemonClient> {
+    let port = find_daemon_port();
+    let client = DaemonClient::new(format!("http://127.0.0.1:{port}"))?;
+    if client.health().await.unwrap_or(false) {
+        return Ok(client);
+    }
+
+    // No healthy daemon. A live PID file means a daemon is starting up: it
+    // registers its PID at process start but binds the HTTP port (and writes
+    // the port file) only after initialization. Never spawn a second daemon
+    // in that state — it would just fail on the database lock.
+    if papered::util::process::running_daemon_pid().is_some() {
+        println!(
+            "{}",
+            "Daemon is starting up; waiting for it to become ready...".yellow()
+        );
+    }
+
+    // Re-resolve the port on every poll: the daemon writes the port file only
+    // after binding, and it may land on a non-default port if 9321 is taken.
+    let mut spawned = false;
+    let mut dead_after_spawn = 0u32;
+    for _ in 0..180 {
         tokio::time::sleep(Duration::from_millis(500)).await;
+        let port = find_daemon_port();
+        let client = DaemonClient::new(format!("http://127.0.0.1:{port}"))?;
         if client.health().await.unwrap_or(false) {
             println!("{}", "Daemon started successfully.".green());
             return Ok(client);
         }
+        if papered::util::process::running_daemon_pid().is_none() {
+            if spawned {
+                // The daemon we spawned died before becoming healthy. The
+                // PID file may lag the process start by a few polls, so only
+                // give up after a sustained absence — retrying the spawn
+                // would loop on the same failure.
+                dead_after_spawn += 1;
+                if dead_after_spawn >= 20 {
+                    break;
+                }
+            } else {
+                // No daemon running: clear stale registration files left by an
+                // ungraceful exit and start one.
+                let _ = std::fs::remove_file(papered::routes::daemon_port_file());
+                let _ = std::fs::remove_file(papered::routes::daemon_pid_file());
+                spawn_daemon()?;
+                spawned = true;
+            }
+        }
     }
 
-    Err(PaperedError::io_other(
-        "Timed out waiting for daemon to start. Check logs with RUST_LOG=info papered-daemon",
-    ))
+    Err(PaperedError::io_other(format!(
+        "Timed out waiting for daemon to start. Check the daemon log at {}",
+        daemon_log_file().display()
+    )))
 }
 
 fn ui_url(base_url: &str) -> String {

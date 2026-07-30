@@ -3,10 +3,10 @@
 // so it survives navigation within the session. Supports scoped mode via
 // #/ask?paper=<id>, which restricts retrieval to a single paper.
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
-import { route, navigate } from './router.js?v=1';
-import { renderMarkdown } from './markdown.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
+import { route, navigate } from './router.js?v=2';
+import { renderMarkdown } from './markdown.js?v=2';
 
 // ---- session state ---------------------------------------------------------
 

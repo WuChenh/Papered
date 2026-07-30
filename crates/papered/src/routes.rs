@@ -27,6 +27,13 @@ pub fn daemon_port_tmp_file() -> std::path::PathBuf {
     daemon_port_dir().join(".daemon.port.tmp")
 }
 
+/// Path to the daemon's PID file, written at process start and removed on
+/// graceful shutdown. Read by CLI clients to tell a live-but-still-starting
+/// daemon apart from a stale port file left by an ungraceful exit.
+pub fn daemon_pid_file() -> std::path::PathBuf {
+    daemon_port_dir().join("daemon.pid")
+}
+
 pub const HEALTH: &str = "/health";
 pub const API_HEALTH: &str = "/api/v1/health";
 pub const API_HEALTH_KB: &str = "/api/v1/health/kb";
@@ -88,6 +95,7 @@ pub const API_PAPERS_ID_CHUNKS_CHUNK_ID: &str = "/api/v1/papers/{id}/chunks/{chu
 pub const API_PAPERS_ID_RATING: &str = "/api/v1/papers/{id}/rating";
 pub const API_PAPERS_ID_COMMENTS: &str = "/api/v1/papers/{id}/comments";
 pub const API_PAPERS_ID_COMMENTS_ID: &str = "/api/v1/papers/{id}/comments/{comment_id}";
+pub const API_PAPERS_ID_INSIGHTS: &str = "/api/v1/papers/{id}/insights";
 pub const API_PAPERS_ID_REINDEX: &str = "/api/v1/papers/{id}/reindex";
 pub const API_PAPERS_ID_REINDEX_SECTIONS: &str = "/api/v1/papers/{id}/reindex-sections";
 pub const API_PROMPTS_ID: &str = "/api/v1/prompts/{id}";

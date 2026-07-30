@@ -838,6 +838,58 @@ a.chip:hover { color: var(--accent-text); border-color: var(--accent-text); }
    forces the toolbar to wrap and the "Papers" label to masquerade as a third
    segmented tab. Intrinsic width keeps the controls on one line. */
 #graph-limit, #graph-degree { width: auto; flex: none; }
+
+/* Graph toolbar paper search: dropdown matches, then locate + pulse */
+.graph-search { position: relative; }
+#graph-search-input { width: 200px; }
+.graph-search-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 340px;
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 60;
+  padding: 6px;
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+.graph-search-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.graph-search-item:hover, .graph-search-item.active { background: var(--surface-2); }
+.graph-search-item-title {
+  display: block;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.graph-search-item-meta { display: block; font-size: 11.5px; color: var(--text-2); margin-top: 1px; }
+.graph-search-empty { padding: 9px 10px; font-size: 12.5px; color: var(--text-2); }
+
+/* Search-located node pulse. Network: stroke pulse on the dot; timeline: the
+   selected card's accent ring (.sel) is reinforced below. The global
+   prefers-reduced-motion rule neutralizes the animation. */
+.g-node.found .g-dot { animation: graph-found 0.8s ease-in-out 3; }
+.g-node.found .g-card-bg { stroke: var(--warn); stroke-width: 2.5; }
+@keyframes graph-found {
+  0%, 100% { stroke: var(--surface); stroke-width: 1.5; }
+  50% { stroke: var(--warn); stroke-width: 4; }
+}
 .snippet-toolbar {
   display: flex;
   justify-content: flex-end;

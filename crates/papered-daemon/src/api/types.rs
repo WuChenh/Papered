@@ -271,6 +271,10 @@ pub struct GraphQuery {
     /// Maximum strongest edges kept per node, to keep the network readable.
     #[serde(default = "default_graph_degree")]
     pub max_edges_per_node: usize,
+    /// Paper the user explicitly located: force-include it together with its
+    /// strongest library-wide neighbors when it would otherwise be absent or
+    /// isolated in the most-recent slice.
+    pub focus: Option<String>,
 }
 
 fn default_graph_limit() -> usize {

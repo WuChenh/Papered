@@ -3003,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "papered"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -3017,6 +3017,7 @@ dependencies = [
  "http",
  "image",
  "indexmap",
+ "libc",
  "paste",
  "pdf_oxide",
  "regex",
@@ -3036,13 +3037,14 @@ dependencies = [
  "turso",
  "uuid",
  "walkdir",
+ "windows-sys 0.61.2",
  "yaml_serde",
  "zip",
 ]
 
 [[package]]
 name = "papered-daemon"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -3070,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "papered-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "papered",
  "rmcp",

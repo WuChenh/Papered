@@ -4,7 +4,6 @@ use axum::routing::get;
 use papered::{AppConfig, error::Result};
 use papered_mcp::{build_mcp_service, run_stdio_server};
 use std::io;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tokio::sync::RwLock;
@@ -32,6 +31,63 @@ fn write_port_file(port: u16) -> io::Result<()> {
     }
     std::fs::rename(&tmp_path, &final_path)?;
     Ok(())
+}
+
+/// Write the daemon PID file (best-effort) so CLI clients can tell a
+/// live-but-still-starting daemon apart from a stale registration left by an
+/// ungraceful exit.
+fn write_pid_file() {
+    let path = papered::routes::daemon_pid_file();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(e) = std::fs::write(&path, format!("{}\n", std::process::id())) {
+        tracing::warn!("Failed to write daemon PID file: {e}");
+    }
+}
+
+/// Removes the daemon's registration files on exit — graceful shutdown and
+/// early error returns alike. The PID file is removed only while it still
+/// names this process, and the port file only if this process wrote it, so a
+/// losing daemon in a startup race cannot unregister the winner.
+struct RegistrationGuard {
+    owns_port_file: bool,
+}
+
+impl RegistrationGuard {
+    /// Fail fast with a clear message when another daemon is already running,
+    /// then register this process. The database lock remains the backstop for
+    /// startup races this check cannot see, but a clear message beats a turso
+    /// locking error.
+    fn acquire() -> Self {
+        if let Some(pid) = papered::util::process::running_daemon_pid() {
+            eprintln!(
+                "Another papered daemon is already running (pid {pid}). \
+                 Stop it with `papered stop` or wait for it to exit."
+            );
+            std::process::exit(1);
+        }
+        write_pid_file();
+        Self {
+            owns_port_file: false,
+        }
+    }
+}
+
+impl Drop for RegistrationGuard {
+    fn drop(&mut self) {
+        let pid_file = papered::routes::daemon_pid_file();
+        let still_ours = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|c| c.trim().parse::<u32>().ok())
+            == Some(std::process::id());
+        if still_ours {
+            let _ = std::fs::remove_file(&pid_file);
+        }
+        if self.owns_port_file {
+            let _ = std::fs::remove_file(papered::routes::daemon_port_file());
+        }
+    }
 }
 
 /// Wait for SIGTERM or SIGINT and log which one arrived.
@@ -65,10 +121,14 @@ async fn main() -> Result<()> {
 
     tracing::info!("Papered daemon starting...");
 
-    // --- Store (includes stale-paper recovery) ---
-    let (store, placeholder_table, current_fingerprint) = state::init_store(&config).await?;
+    // --- Single-instance registration ---
+    // --stdio instances are spawned per MCP client and only speak MCP over
+    // stdio; they neither bind the HTTP port nor take part in HTTP-daemon
+    // registration.
+    let mut registration = (!use_stdio).then(RegistrationGuard::acquire);
 
-    let mut needs_model_change_reembed = false;
+    // --- Store (includes stale-paper recovery) ---
+    let store = state::init_store(&config).await?;
 
     // --- Clients ---
     // Tolerate unconfigured purposes (fresh install before the setup wizard):
@@ -124,60 +184,13 @@ async fn main() -> Result<()> {
         zotero_sync_tx,
     ));
 
-    // --- Embedding model test ---
-    if placeholder_table {
-        match state.test_and_prepare_embedding_store().await {
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(
-                    "Embedding model test failed: {}. Monitoring config for changes.",
-                    e
-                );
-            }
-        }
-    } else {
-        let stored_fingerprint = store.get_meta("embedding_fingerprint").await.ok().flatten();
-        let models_changed = match &stored_fingerprint {
-            Some(stored) => {
-                let current = current_fingerprint.as_deref().unwrap_or("");
-                *stored != current
-            }
-            None => false,
-        };
-
-        if models_changed {
-            tracing::info!("Embedding model changed — testing new model");
-            match state
-                .handle_embedding_model_change(state::EmbeddingRebuildPolicy::ForceRebuild)
-                .await
-            {
-                Ok(change) => {
-                    if change.rebuilt {
-                        needs_model_change_reembed = true;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "New embedding model test failed: {e}. Starting in degraded mode."
-                    );
-                }
-            }
-        } else {
-            // Fingerprint unchanged, but still verify the model is actually reachable
-            // instead of blindly trusting a past probe. `handle_embedding_model_change`
-            // with `ProbeOnly` only probes (never touches vectors) and is the sole
-            // writer of `embedding_model_ready`.
-            tracing::info!("Embedding model unchanged — verifying reachability");
-            if let Err(e) = state
-                .handle_embedding_model_change(state::EmbeddingRebuildPolicy::ProbeOnly)
-                .await
-            {
-                tracing::warn!(
-                    "Embedding model unreachable at startup: {e}; recovery watcher will retry"
-                );
-            }
-        }
-    }
+    // NOTE: the embedding model is deliberately NOT probed here. A probe is a
+    // network call whose worst case is unbounded (an endpoint that drops
+    // packets burns the full client timeout), and everything before the HTTP
+    // bind must stay local and bounded so the daemon becomes reachable — and
+    // writes its port file — within a short, predictable window. The recovery
+    // watcher below performs the initial probe (its first tick is immediate)
+    // and keeps retrying until the model is reachable.
 
     // --- Sync workers ---
     state.spawn_lattice_sync().await;
@@ -203,8 +216,8 @@ async fn main() -> Result<()> {
         tracing::info!("Starting embedding model recovery watcher (30s interval)");
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
-            // The first interval tick completes immediately, so the check runs
-            // at startup and then every 30s.
+            // The first interval tick completes immediately, so the initial
+            // probe runs at startup and then every 30s until the model is ready.
             interval.tick().await;
             if retry_state.embedding_model_ready.load(Ordering::Relaxed) {
                 break;
@@ -213,25 +226,26 @@ async fn main() -> Result<()> {
             let Ok(embedding) = state::build_embedding_client(&config) else {
                 continue;
             };
-            *retry_state.embedding.write().await = embedding
-                .with_metrics(papered::llm::metrics::store_metrics_sink(&retry_state.store));
+            *retry_state.embedding.write().await = embedding.with_metrics(
+                papered::llm::metrics::store_metrics_sink(&retry_state.store),
+            );
             drop(config);
-            // Recovery is not the same as a model change: if the model (and its
-            // dimension) is unchanged, the existing vectors are still valid and
-            // must be preserved. Only rebuild when the dimension actually differs.
-            match retry_state
-                .handle_embedding_model_change(state::EmbeddingRebuildPolicy::RebuildIfChanged)
-                .await
-            {
+            // A fingerprint mismatch means the stored vectors came from a
+            // different model than the configured one: force a rebuild even
+            // when the dimension is unchanged. Otherwise an outage alone must
+            // not destroy existing vectors — rebuild only when the dimension
+            // actually differs.
+            let policy = retry_state.probe_rebuild_policy().await;
+            match retry_state.handle_embedding_model_change(policy).await {
                 Ok(change) => {
                     if change.rebuilt {
                         let total = retry_state.reembed_all_now().await;
                         tracing::info!(
-                            "Embedding model changed during outage — queued {total} papers for re-embed"
+                            "Embedding model changed — queued {total} papers for re-embed"
                         );
                     } else {
                         tracing::info!(
-                            "Embedding model recovered (dimension {} unchanged); vectors preserved",
+                            "Embedding model ready (dimension {} unchanged); vectors preserved",
                             change.detected_dim
                         );
                     }
@@ -247,14 +261,6 @@ async fn main() -> Result<()> {
             }
         }
     });
-
-    if needs_model_change_reembed {
-        tracing::info!("Queuing all papers for re-embed after embedding model change");
-        let state_for_reembed = state.clone();
-        background_tasks.spawn(async move {
-            state_for_reembed.reembed_all_now().await;
-        });
-    }
 
     state::start_config_watcher(state.clone(), &mut background_tasks);
 
@@ -301,7 +307,24 @@ async fn main() -> Result<()> {
         ))
         .with_state(state.clone());
 
+    // --- MCP stdio path ---
+    if use_stdio {
+        tracing::info!("Starting Papered MCP stdio transport");
+        run_stdio_server(
+            store.clone(),
+            state.search_engine.clone(),
+            state.rag_engine.clone(),
+        )
+        .await;
+        background_tasks.shutdown().await;
+        return Ok(());
+    }
+
     // --- Bind and listen ---
+    // Binding happens only after initialization so the port file — written
+    // right after a successful bind — always means "this process is serving
+    // HTTP on this port". --stdio instances never reach this point and thus
+    // cannot clobber a running HTTP daemon's registration.
     const BASE_PORT: u16 = papered::routes::DAEMON_DEFAULT_PORT;
     const MAX_PORT_TRIES: u16 = papered::routes::DAEMON_MAX_PORT_TRIES;
     let mut listener = None;
@@ -332,13 +355,15 @@ async fn main() -> Result<()> {
     let addr = listener.local_addr().map_err(papered::PaperedError::Io)?;
 
     // --- Port file ---
-    let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
     write_port_file(addr.port()).unwrap_or_else(|e| {
         tracing::warn!("Failed to write daemon port file: {}", e);
     });
+    if let Some(reg) = &mut registration {
+        reg.owns_port_file = true;
+    }
 
     // --- Signal handling and graceful shutdown ---
-    let port_file = config_dir.join("papered").join("daemon.port");
+    // Registration files are removed by the RegistrationGuard on return.
     let shutdown = async move {
         #[cfg(unix)]
         {
@@ -351,23 +376,7 @@ async fn main() -> Result<()> {
             let _ = tokio::signal::ctrl_c().await;
             tracing::info!("Received Ctrl+C, shutting down gracefully");
         }
-        if let Err(e) = std::fs::remove_file(&port_file) {
-            tracing::debug!("Failed to remove port file: {}", e);
-        }
     };
-
-    // --- MCP stdio path ---
-    if use_stdio {
-        tracing::info!("Starting Papered MCP stdio transport");
-        run_stdio_server(
-            store.clone(),
-            state.search_engine.clone(),
-            state.rag_engine.clone(),
-        )
-        .await;
-        background_tasks.shutdown().await;
-        return Ok(());
-    }
 
     // --- Serve ---
     axum::serve(listener, app)

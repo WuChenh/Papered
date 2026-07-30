@@ -7,8 +7,6 @@ use thiserror::Error;
 /// What to do with stored vectors when the embedding model is (re)probed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EmbeddingRebuildPolicy {
-    /// Probe the model only — never touch stored vectors.
-    ProbeOnly,
     /// Clear vectors and re-embed only when the detected dimension differs
     /// from the store's current dimension.
     RebuildIfChanged,
@@ -83,13 +81,27 @@ impl AppState {
         Ok(())
     }
 
-    /// Test the embedding model, clear vectors, and update metadata.
-    pub async fn test_and_prepare_embedding_store(&self) -> papered::error::Result<usize> {
-        let detected = self.test_and_prepare_embedding().await?;
-        if detected > 0 {
-            self.reset_embedding_store(detected).await?;
+    /// Pick the rebuild policy for a startup/recovery probe. A fingerprint
+    /// mismatch means the stored vectors came from a different model than the
+    /// configured one, so they must be rebuilt even when the dimension is
+    /// unchanged. A MISSING stored fingerprint is not a mismatch: stores
+    /// written before fingerprint tracking (or before any successful probe)
+    /// must not be wiped on upgrade, so fall back to rebuilding only when the
+    /// dimension actually differs — a mere outage must never destroy vectors.
+    pub(crate) async fn probe_rebuild_policy(&self) -> EmbeddingRebuildPolicy {
+        let stored = self
+            .store
+            .get_meta("embedding_fingerprint")
+            .await
+            .ok()
+            .flatten();
+        let current = self.config.read().await.embedding_fingerprint();
+        match (stored, current) {
+            (Some(stored), Some(current)) if stored != current => {
+                EmbeddingRebuildPolicy::ForceRebuild
+            }
+            _ => EmbeddingRebuildPolicy::RebuildIfChanged,
         }
-        Ok(detected)
     }
 
     /// Probe the embedding model and, per `policy`, clear stored vectors and
@@ -107,7 +119,6 @@ impl AppState {
             .map_err(EmbeddingChangeError::Probe)?;
         let current_dim = self.store.store_dimension().await;
         let rebuild = match policy {
-            EmbeddingRebuildPolicy::ProbeOnly => false,
             EmbeddingRebuildPolicy::RebuildIfChanged => {
                 detected_dim > 0 && current_dim != Some(detected_dim)
             }

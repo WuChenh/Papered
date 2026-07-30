@@ -1,9 +1,9 @@
 // Health view: index health overview, data quality, duplicates, integrity,
 // image quality, and maintenance actions. Registers route('/health').
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
-import { route } from './router.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
+import { route } from './router.js?v=2';
 
 // ---- tab registry ----------------------------------------------------------
 // Each tab: fetch() loads data, paint(el, data, ctx) renders into the tab body.

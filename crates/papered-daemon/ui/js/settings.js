@@ -1,9 +1,9 @@
 // Settings editor: faithful draft editor for providers / models / purposes,
 // plus data management (paths, reset). Registers the /settings route.
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
-import { route, setLeaveGuard, clearLeaveGuard } from './router.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
+import { route, setLeaveGuard, clearLeaveGuard } from './router.js?v=2';
 
 // ---- helpers -----------------------------------------------------------
 

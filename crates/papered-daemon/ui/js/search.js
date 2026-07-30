@@ -3,9 +3,9 @@
 // module state so navigating away and back restores the view without
 // re-fetching.
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
-import { route } from './router.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
+import { route } from './router.js?v=2';
 
 // ---- module state (restored on re-entry) --------------------------------
 

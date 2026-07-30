@@ -89,6 +89,8 @@ export const API = {
     API.post('/api/v1/papers/' + encodeURIComponent(id) + '/comments', { content }),
   deleteComment: (id, commentId) =>
     API.del('/api/v1/papers/' + encodeURIComponent(id) + '/comments/' + encodeURIComponent(commentId)),
+  generateInsight: (id) =>
+    API.post('/api/v1/papers/' + encodeURIComponent(id) + '/insights'),
 
   // ---- search / rag ----
   search: (body) => API.post('/api/v1/search', body),

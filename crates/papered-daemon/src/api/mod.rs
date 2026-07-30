@@ -5,6 +5,7 @@ pub mod config;
 pub mod export;
 pub mod health;
 pub mod health_response;
+pub mod insights;
 pub mod lattice;
 pub mod metrics;
 pub mod papers;
@@ -38,6 +39,7 @@ pub fn api_router() -> Router<Arc<AppState>> {
         cleanup_health, cleanup_images, data_quality, find_duplicate_groups, health, image_quality,
         kb_health, optimize_images, optimize_store, regenerate_covers, v1_health,
     };
+    use self::insights::generate_insight;
     use self::lattice::{
         import_from_lattice, lattice_collections, lattice_search, lattice_status, lattice_sync,
         lattice_sync_cancel, lattice_sync_collections,
@@ -96,6 +98,7 @@ pub fn api_router() -> Router<Arc<AppState>> {
         )
         .route(API_PAPERS_ID_COMMENTS, get(list_comments).post(add_comment))
         .route(API_PAPERS_ID_COMMENTS_ID, delete(delete_comment))
+        .route(API_PAPERS_ID_INSIGHTS, post(generate_insight))
         .route(API_PAPERS_ID_REINDEX, post(reindex_paper))
         .route(API_PAPERS_ID_REINDEX_SECTIONS, post(reindex_paper_sections))
         .route(API_TEST_ENDPOINT, post(test_endpoint))

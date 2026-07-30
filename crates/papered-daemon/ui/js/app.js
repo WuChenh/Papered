@@ -2,20 +2,20 @@
 // dashboard view, and the boot sequence (setup wizard gate).
 // View modules self-register their routes on import; the router starts last.
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
-import { route, navigate, start, render } from './router.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
+import { route, navigate, start, render } from './router.js?v=2';
 
 // Side-effect imports: each view module registers its routes on load.
-import './library.js?v=1';
-import './search.js?v=1';
-import './graph.js?v=1';
-import './ask.js?v=1';
-import './prompts.js?v=1';
-import './sync.js?v=1';
-import './health.js?v=1';
-import './settings.js?v=1';
-import { renderWizard } from './wizard.js?v=1';
+import './library.js?v=2';
+import './search.js?v=2';
+import './graph.js?v=2';
+import './ask.js?v=2';
+import './prompts.js?v=2';
+import './sync.js?v=2';
+import './health.js?v=2';
+import './settings.js?v=2';
+import { renderWizard } from './wizard.js?v=2';
 
 // ---- appearance popover -------------------------------------------------
 

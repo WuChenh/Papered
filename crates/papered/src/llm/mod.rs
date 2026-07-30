@@ -9,6 +9,7 @@ pub mod cache;
 pub mod client;
 pub mod embed;
 pub mod headings;
+pub mod insight;
 pub mod metrics;
 pub mod provider;
 pub mod query_enhancer;

@@ -2,8 +2,8 @@
 // → verify state machine. Exports renderWizard(container, onComplete);
 // app.js calls it when the daemon reports needs_setup.
 
-import * as U from './util.js?v=1';
-import { API } from './api.js?v=1';
+import * as U from './util.js?v=2';
+import { API } from './api.js?v=2';
 
 // ---- presets --------------------------------------------------------------
 

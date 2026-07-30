@@ -375,6 +375,13 @@ fn edge_between(a: &Paper, b: &Paper, sa: &PaperSets, sb: &PaperSets) -> Option<
     })
 }
 
+/// Compute the relatedness edge between two papers, building their comparison
+/// sets on the fly. Public wrapper for one-off comparisons (e.g. the search
+/// engine's graph-focus expansion); the batch builder precomputes sets instead.
+pub fn relatedness_edge(a: &Paper, b: &Paper) -> Option<GraphEdge> {
+    edge_between(a, b, &PaperSets::from_paper(a), &PaperSets::from_paper(b))
+}
+
 /// Build the relatedness graph over a set of papers.
 ///
 /// `max_edges_per_node` caps how many of the strongest edges each node keeps so

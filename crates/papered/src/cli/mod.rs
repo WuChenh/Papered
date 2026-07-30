@@ -143,19 +143,36 @@ pub async fn handle_stats(client: &DaemonClient) -> Result<()> {
     use colored::Colorize;
     use papered::client::api_get_json;
     use papered::routes::API_STATS;
+    use papered::util::fs::human_readable_size;
+
+    #[derive(serde::Deserialize)]
+    struct StorageBreakdown {
+        db_bytes: u64,
+        images_bytes: u64,
+        covers_bytes: u64,
+    }
 
     #[derive(serde::Deserialize)]
     struct StatsResponse {
         papers: usize,
         vectors: usize,
-        db_path: String,
+        figures: usize,
+        data_dir: String,
+        storage: StorageBreakdown,
     }
 
     let stats: StatsResponse = api_get_json(client, API_STATS).await?;
     println!("{}", "Knowledge Base Statistics".bold().underline());
     println!("  Papers:  {}", stats.papers.to_string().cyan().bold());
     println!("  Vectors: {}", stats.vectors.to_string().cyan().bold());
-    println!("  DB Path: {}", stats.db_path);
+    println!("  Figures: {}", stats.figures.to_string().cyan().bold());
+    println!("  Data Dir: {}", stats.data_dir);
+    println!(
+        "  Storage: {} db, {} images, {} covers",
+        human_readable_size(stats.storage.db_bytes),
+        human_readable_size(stats.storage.images_bytes),
+        human_readable_size(stats.storage.covers_bytes),
+    );
     Ok(())
 }
 

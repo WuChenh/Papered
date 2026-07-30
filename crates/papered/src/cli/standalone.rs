@@ -17,7 +17,13 @@ pub async fn handle_stop() -> Result<()> {
     use colored::Colorize;
 
     let port_file = papered::routes::daemon_port_file();
-    if !port_file.exists() {
+    let pid_file = papered::routes::daemon_pid_file();
+    // A starting daemon has a PID file but may not have written its port file
+    // yet; check both before declaring the daemon absent.
+    if !port_file.exists()
+        && papered::util::process::running_daemon_pid().is_none()
+        && !pid_file.exists()
+    {
         println!("{}", "Daemon is not running.".yellow());
         return Ok(());
     }
@@ -26,7 +32,7 @@ pub async fn handle_stop() -> Result<()> {
     stop_daemon();
 
     for _ in 0..20 {
-        if !port_file.exists() {
+        if !port_file.exists() && !pid_file.exists() {
             println!("{}", "Daemon stopped.".green().bold());
             return Ok(());
         }
@@ -36,7 +42,7 @@ pub async fn handle_stop() -> Result<()> {
     println!(
         "{} {}",
         "Daemon stopped.".green().bold(),
-        "(port file may remain — ignore or remove manually)".dimmed()
+        "(registration files may remain — ignore or remove manually)".dimmed()
     );
     Ok(())
 }
