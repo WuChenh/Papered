@@ -2,20 +2,20 @@
 // dashboard view, and the boot sequence (setup wizard gate).
 // View modules self-register their routes on import; the router starts last.
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
-import { route, navigate, start, render } from './router.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
+import { route, navigate, start, render } from './router.js?v=1';
 
 // Side-effect imports: each view module registers its routes on load.
-import './library.js?v=2';
-import './search.js?v=2';
-import './graph.js?v=2';
-import './ask.js?v=2';
-import './prompts.js?v=2';
-import './sync.js?v=2';
-import './health.js?v=2';
-import './settings.js?v=2';
-import { renderWizard } from './wizard.js?v=2';
+import './library.js?v=1';
+import './search.js?v=1';
+import './graph.js?v=1';
+import './ask.js?v=1';
+import './prompts.js?v=1';
+import './sync.js?v=1';
+import './health.js?v=1';
+import './settings.js?v=1';
+import { renderWizard } from './wizard.js?v=1';
 
 // ---- appearance popover -------------------------------------------------
 
@@ -368,8 +368,24 @@ function renderSyncBody(container, zotero, lattice) {
 
 function queueCardHTML() {
   return '<div class="card"><div class="card-head"><span class="card-title-icon">' + U.icon('list', 17) +
-    '</span><h3>Index queue</h3><span class="spacer"></span><span id="queue-count"></span></div>' +
+    '</span><h3>Index queue</h3><span class="spacer"></span><span id="queue-count"></span>' +
+    '<button type="button" class="btn subtle sm" id="queue-pause">Pause</button></div>' +
     '<div id="queue-body">' + U.spinner() + '</div></div>';
+}
+
+function queueItemHTML(it) {
+  const filePath = it.file_path || '';
+  const title = (it.title || '').trim();
+  const label = title || filePath.split(/[\\/]/).pop() || it.paper_id;
+  // Whole row is a link to the paper detail page (keyboard-accessible anchor).
+  let html = '<a class="queue-item queue-item-link" href="#/paper/' + encodeURIComponent(it.paper_id || '') + '">' +
+    U.badge(it.status, U.statusTone(it.status)) +
+    '<span class="queue-main"><span class="queue-title" title="' + U.esc(filePath) + '">' + U.esc(label) + '</span>';
+  if (it.status === 'failed' && it.error_message) {
+    html += '<span class="queue-error" title="' + U.esc(it.error_message) + '">' +
+      U.esc(U.truncate(it.error_message, 160)) + '</span>';
+  }
+  return html + '</span></a>';
 }
 
 function storageTitle(stats) {
@@ -478,22 +494,32 @@ function renderDashboard(container) {
   // Index queue with adaptive polling
   function pollQueue() {
     if (!document.getElementById('queue-body')) return;
-    API.importQueue().then((items) => {
+    API.importQueue().then((res) => {
       const body = container.querySelector('#queue-body');
       const count = container.querySelector('#queue-count');
+      const pauseBtn = container.querySelector('#queue-pause');
       if (!body) return;
+      const items = res.items || [];
+      const paused = !!res.paused;
+      if (pauseBtn) {
+        pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+        pauseBtn.onclick = () => {
+          pauseBtn.disabled = true;
+          API.setIndexingPaused(!paused).then(() => { pollQueue(); refreshPausedBadge(); })
+            .catch((e) => U.toast(e.message, 'error'))
+            .finally(() => { pauseBtn.disabled = false; });
+        };
+      }
       if (!items.length) {
-        count.innerHTML = '';
+        count.innerHTML = paused ? U.badge('paused', 'warn') : '';
         body.innerHTML = '<p class="muted small center pad-block">Queue is empty — everything is indexed.</p>';
       } else {
-        count.innerHTML = U.badge(items.length + ' active', 'info');
-        body.innerHTML = items.slice(0, 20).map((it) =>
-          '<div class="queue-item">' + U.badge(it.status, U.statusTone(it.status)) +
-          '<span class="file-path" title="' + U.esc(it.file_path || '') + '">' + U.esc(it.file_path || it.paper_id) + '</span>' +
-          '<a class="btn subtle sm" href="#/paper/' + encodeURIComponent(it.paper_id) + '">View</a></div>'
-        ).join('');
+        count.innerHTML = U.badge(items.length + (paused ? ' · paused' : ' active'), paused ? 'warn' : 'info');
+        body.innerHTML = '<div class="scroll-box-lg">' + items.slice(0, 100).map(queueItemHTML).join('') +
+          (items.length > 100 ? '<p class="muted small center pad-block">… and ' + U.fmtInt(items.length - 100) + ' more</p>' : '') +
+          '</div>';
       }
-      queueTimer = setTimeout(pollQueue, items.length ? 2000 : 15000);
+      queueTimer = setTimeout(pollQueue, items.length && !paused ? 2000 : 15000);
     }).catch(() => {
       queueTimer = setTimeout(pollQueue, 15000);
     });
@@ -504,11 +530,35 @@ function renderDashboard(container) {
 
 route('/', { title: 'Dashboard', render: renderDashboard });
 
+// ---- indexing paused badge (shell-wide) ------------------------------------
+// The paused flag rides on the lightweight health response; polled slowly so
+// every page reflects it without touching the heavy import-queue payload.
+
+const PAUSED_POLL_MS = 30000;
+let pausedPollTimer = null;
+
+function updatePausedBadge(paused) {
+  const badge = document.getElementById('indexing-paused-badge');
+  if (badge) badge.classList.toggle('hidden', !paused);
+}
+
+function refreshPausedBadge() {
+  API.health().then((h) => updatePausedBadge(!!h.indexing_paused)).catch(() => {});
+}
+
+function startPausedPoll() {
+  updatePausedBadge(false);
+  refreshPausedBadge();
+  clearInterval(pausedPollTimer);
+  pausedPollTimer = setInterval(refreshPausedBadge, PAUSED_POLL_MS);
+}
+
 // ---- boot ---------------------------------------------------------------
 
 function boot() {
   injectShellIcons();
   initAppearance();
+  startPausedPoll();
   const toggle = document.getElementById('sidebar-toggle');
   toggle.addEventListener('click', () => {
     const open = document.getElementById('sidebar').classList.toggle('open');

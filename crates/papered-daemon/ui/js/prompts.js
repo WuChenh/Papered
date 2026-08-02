@@ -1,9 +1,9 @@
 // Prompts view: manage RAG system prompts used by Ask.
 // Route: /prompts. Self-registers via route() on import.
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
-import { route, navigate } from './router.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
+import { route, navigate } from './router.js?v=1';
 
 // ---- prompt card ---------------------------------------------------------
 

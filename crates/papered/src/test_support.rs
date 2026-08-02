@@ -274,19 +274,19 @@ impl VectorStore for MockVectorStore {
         self.figures.lock().unwrap().remove(paper_id);
         Ok(())
     }
-    async fn papers_without_vectors(&self) -> Result<Vec<String>> {
+    async fn papers_without_vectors(&self) -> Result<Vec<crate::store::vector::PaperRef>> {
         Ok(vec![])
     }
     async fn orphaned_vector_paper_ids(&self) -> Result<Vec<String>> {
         Ok(vec![])
     }
-    async fn papers_with_missing_files(&self) -> Result<Vec<String>> {
+    async fn papers_with_missing_files(&self) -> Result<Vec<crate::store::vector::PaperRef>> {
         Ok(vec![])
     }
     async fn figures_with_missing_images(
         &self,
         _data_dir: &std::path::Path,
-    ) -> Result<Vec<(String, String)>> {
+    ) -> Result<Vec<crate::store::vector::MissingFigureImage>> {
         Ok(vec![])
     }
     async fn orphaned_data_directories(&self, _data_dir: &std::path::Path) -> Result<Vec<String>> {

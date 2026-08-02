@@ -39,6 +39,7 @@ pub(crate) fn spawn_indexing_worker_pool(
     let in_progress: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
     tasks.spawn(async move {
+        let mut pause_rx = state2.index_pause_tx.subscribe();
         while let Some(job) = import_rx.recv().await {
             {
                 let mut guard = in_progress.lock().unwrap();
@@ -58,6 +59,18 @@ pub(crate) fn spawn_indexing_worker_pool(
                     break;
                 }
             };
+            // Pause gate: checked after the semaphore acquire so a job that was
+            // received before the pause cannot slip through while waiting for a
+            // permit. Holds the job + permit until resumed; in-flight jobs (up
+            // to `concurrency`) run to completion.
+            if *pause_rx.borrow() {
+                tracing::info!("Indexing paused — holding jobs until resumed");
+                if pause_rx.wait_for(|paused| !*paused).await.is_err() {
+                    tracing::error!("Pause channel closed, stopping indexing worker");
+                    break;
+                }
+                tracing::info!("Indexing resumed");
+            }
             let state_for_job = state2.clone();
             let tx = retry_tx.clone();
             let in_progress = in_progress.clone();
@@ -209,12 +222,9 @@ pub(crate) fn spawn_indexing_worker_pool(
         for paper in &failed_papers {
             if let Some(ref file_path) = paper.file_path {
                 let job = papered::util::IndexJob {
-                    paper_id: paper.id.clone(),
-                    file_path: file_path.clone(),
                     is_reindex: true,
                     retry_count: paper.retry_count,
-                    sections_only: false,
-                    reembed_only: false,
+                    ..papered::util::IndexJob::new(paper.id.clone(), file_path.clone())
                 };
                 tracing::info!(
                     "Queuing failed paper for auto-retry on startup: {} (retry {}/{})",

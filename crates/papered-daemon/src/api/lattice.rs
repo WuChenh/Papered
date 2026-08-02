@@ -156,14 +156,12 @@ pub async fn lattice_sync_collections(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LatticeSyncCollectionsRequest>,
 ) -> ApiResult<LatticeSyncCollectionsResponse> {
-    let _guard = state.config_write_lock.lock().await;
-    let old_config = state.config.read().await.clone();
-    let mut new_config = old_config.clone();
-    new_config.lattice_sync.collections = req.collection_names.clone();
-    new_config
-        .save()
+    state
+        .update_config_saved(|config| {
+            config.lattice_sync.collections = req.collection_names.clone();
+        })
+        .await
         .map_err(|e| internal_error(e.to_string()))?;
-    state.apply_config_update(&new_config, &old_config).await;
     Ok(Json(LatticeSyncCollectionsResponse {
         collection_names: req.collection_names,
     }))
@@ -214,12 +212,11 @@ pub async fn import_from_lattice(
                 path.display()
             )));
         }
-        if path
+        let is_pdf = path
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| !e.eq_ignore_ascii_case("pdf"))
-            != Some(false)
-        {
+            .is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+        if !is_pdf {
             return Err(bad_request_msg(format!(
                 "File must be a PDF: {}",
                 path.display()

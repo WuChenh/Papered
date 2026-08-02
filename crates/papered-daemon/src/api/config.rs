@@ -9,9 +9,10 @@ use std::sync::Arc;
 
 use super::types::{
     ApiResult, ERR_CONFIG_CONFLICT, ERR_INVALID_CONFIG, ERR_SSRF_BLOCKED, EmbeddingUpdateRequest,
-    HealthResponse, ImportQueueItem, ResetRequest, ResetResponse, SetupStatusResponse,
-    TestEmbeddingRequest, TestEmbeddingResponse, TestEndpointRequest, TestRerankerRequest,
-    TestRerankerResponse, bad_request, bad_request_msg, internal_error, map_err,
+    HealthResponse, ImportQueueItem, ImportQueueResponse, IndexingPausedResponse, ResetRequest,
+    ResetResponse, SetIndexingPausedRequest, SetupStatusResponse, TestEmbeddingRequest,
+    TestEmbeddingResponse, TestEndpointRequest, TestRerankerRequest, TestRerankerResponse,
+    bad_request, bad_request_msg, internal_error, map_err,
 };
 use crate::AppState;
 use papered::client::is_loopback_host;
@@ -227,7 +228,7 @@ pub async fn update_embedding_config(
     ))
 }
 
-pub async fn import_queue(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ImportQueueItem>> {
+pub async fn import_queue(State(state): State<Arc<AppState>>) -> ApiResult<ImportQueueResponse> {
     let mut items = Vec::new();
     let processing = state
         .store
@@ -240,13 +241,64 @@ pub async fn import_queue(State(state): State<Arc<AppState>>) -> ApiResult<Vec<I
         .await
         .map_err(map_err)?;
     for p in processing.into_iter().chain(failed) {
+        let title = if p.title.is_empty() {
+            None
+        } else {
+            Some(p.title)
+        };
         items.push(ImportQueueItem {
             paper_id: p.id,
             file_path: p.file_path.unwrap_or_default(),
             status: p.status.to_string(),
+            title,
+            error_message: p.error_message,
         });
     }
-    Ok(Json(items))
+    Ok(Json(ImportQueueResponse {
+        paused: state
+            .indexing_paused
+            .load(std::sync::atomic::Ordering::Relaxed),
+        items,
+    }))
+}
+
+/// Pause or resume the indexing worker pool. In-flight jobs run to
+/// completion; queued jobs wait until resumed.
+pub async fn set_indexing_paused(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SetIndexingPausedRequest>,
+) -> ApiResult<IndexingPausedResponse> {
+    state
+        .indexing_paused
+        .store(req.paused, std::sync::atomic::Ordering::Relaxed);
+    // Wakes the worker loop when resuming; harmless when pausing.
+    let _ = state.index_pause_tx.send(req.paused);
+    // Persist the pause so it survives daemon restarts.
+    let flag = {
+        let config = state.config.read().await;
+        crate::state::index_pause_flag_path(&config)
+    };
+    let persist = if req.paused {
+        tokio::fs::write(&flag, b"1\n").await
+    } else {
+        match tokio::fs::remove_file(&flag).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    };
+    if let Err(e) = persist {
+        tracing::warn!(
+            "Failed to persist indexing pause flag {}: {}",
+            flag.display(),
+            e
+        );
+    }
+    tracing::info!(
+        "Indexing worker pool {}",
+        if req.paused { "paused" } else { "resumed" }
+    );
+    Ok(Json(IndexingPausedResponse { paused: req.paused }))
 }
 
 /// Whether first-run setup is incomplete: no provider carries an API key and
@@ -305,11 +357,16 @@ const KEY_SKIPPED_ERR_WARNING: &str =
 /// restores the original stored key before writing to disk.
 const REDACTED_API_KEY: &str = "****redacted****";
 
-pub async fn test_endpoint(
-    State(_state): State<Arc<AppState>>,
-    Json(req): Json<TestEndpointRequest>,
-) -> ApiResult<TestEndpointResponse> {
-    let base = req.api_base.trim_end_matches('/');
+/// Validate a probe target and build the dedicated no-redirect probe client.
+///
+/// Returns `(parsed_base, host, probe_client)` on success. Shared by
+/// `test_endpoint` / `test_embedding` / `test_reranker` so the SSRF
+/// host-validation and client construction stay in one place.
+fn validate_probe_target(
+    api_base: &str,
+    blocked_message: &str,
+) -> Result<(String, String, reqwest::Client), (StatusCode, Json<ApiError>)> {
+    let base = api_base.trim_end_matches('/');
     let parsed = base
         .parse::<axum::http::Uri>()
         .map_err(|e| bad_request_msg(format!("Invalid api_base URL: {e}")))?;
@@ -319,21 +376,37 @@ pub async fn test_endpoint(
             "api_base must use http or https scheme".to_string(),
         ));
     }
-    let host = parsed.host().unwrap_or("");
+    let host = parsed.host().unwrap_or("").to_string();
     if host.is_empty() {
         return Err(bad_request_msg("api_base must include a host".to_string()));
     }
-    if is_blocked_host(host) {
-        return Err(bad_request(
-            ERR_SSRF_BLOCKED,
-            "refusing to probe a reserved or metadata address".to_string(),
-        ));
+    if is_blocked_host(&host) {
+        return Err(bad_request(ERR_SSRF_BLOCKED, blocked_message.to_string()));
     }
+    // Dedicated no-redirect, short-timeout client: a remote must not bounce us
+    // into internal/metadata addresses via a 302 (redirect-based SSRF). The
+    // shared client keeps redirects for normal LLM calls.
+    let probe_client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| internal_error(format!("http client: {e}")))?;
+    Ok((base.to_string(), host, probe_client))
+}
+
+pub async fn test_endpoint(
+    State(_state): State<Arc<AppState>>,
+    Json(req): Json<TestEndpointRequest>,
+) -> ApiResult<TestEndpointResponse> {
+    let (base, host, probe_client) = validate_probe_target(
+        &req.api_base,
+        "refusing to probe a reserved or metadata address",
+    )?;
 
     // Forward the user-supplied key only to a loopback LLM — never to a LAN or
     // public host, where it would leak. Private/LAN hosts are still probed,
     // just without auth.
-    let forward_key = is_loopback_host(host) && req.api_key.is_some();
+    let forward_key = is_loopback_host(&host) && req.api_key.is_some();
     if forward_key {
         tracing::warn!("test_endpoint forwarding API key to loopback address");
     } else if req.api_key.is_some() {
@@ -347,15 +420,6 @@ pub async fn test_endpoint(
         None
     };
     let key_skipped_for_remote = req.api_key.is_some() && !forward_key;
-
-    // Dedicated no-redirect, short-timeout client: a remote must not bounce us
-    // into internal/metadata addresses via a 302 (redirect-based SSRF). The
-    // shared client keeps redirects for normal LLM calls.
-    let probe_client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| internal_error(format!("http client: {e}")))?;
 
     let url = format!("{base}/models");
     let mut request = probe_client.get(&url);
@@ -404,32 +468,10 @@ pub async fn test_embedding(
     Json(req): Json<TestEmbeddingRequest>,
 ) -> ApiResult<TestEmbeddingResponse> {
     // SSRF: validate the host before constructing an HTTP client.
-    let base = req.api_base.trim_end_matches('/');
-    let parsed = base
-        .parse::<axum::http::Uri>()
-        .map_err(|e| bad_request_msg(format!("Invalid api_base URL: {e}")))?;
-    let scheme = parsed.scheme_str().unwrap_or("");
-    if scheme != "http" && scheme != "https" {
-        return Err(bad_request_msg(
-            "api_base must use http or https scheme".to_string(),
-        ));
-    }
-    let host = parsed.host().unwrap_or("");
-    if host.is_empty() {
-        return Err(bad_request_msg("api_base must include a host".to_string()));
-    }
-    if is_blocked_host(host) {
-        return Err(bad_request(
-            ERR_SSRF_BLOCKED,
-            "refusing to connect to a reserved or metadata address".to_string(),
-        ));
-    }
-    // Dedicated no-redirect, short-timeout probe client.
-    let probe_client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| internal_error(format!("http client: {e}")))?;
+    let (_base, _host, probe_client) = validate_probe_target(
+        &req.api_base,
+        "refusing to connect to a reserved or metadata address",
+    )?;
 
     let client = papered::llm::embed::EmbeddingClient::new(
         &req.api_base,
@@ -461,32 +503,10 @@ pub async fn test_reranker(
     Json(req): Json<TestRerankerRequest>,
 ) -> ApiResult<TestRerankerResponse> {
     // SSRF: validate the host before constructing an HTTP client.
-    let base = req.api_base.trim_end_matches('/');
-    let parsed = base
-        .parse::<axum::http::Uri>()
-        .map_err(|e| bad_request_msg(format!("Invalid api_base URL: {e}")))?;
-    let scheme = parsed.scheme_str().unwrap_or("");
-    if scheme != "http" && scheme != "https" {
-        return Err(bad_request_msg(
-            "api_base must use http or https scheme".to_string(),
-        ));
-    }
-    let host = parsed.host().unwrap_or("");
-    if host.is_empty() {
-        return Err(bad_request_msg("api_base must include a host".to_string()));
-    }
-    if is_blocked_host(host) {
-        return Err(bad_request(
-            ERR_SSRF_BLOCKED,
-            "refusing to connect to a reserved or metadata address".to_string(),
-        ));
-    }
-    // Dedicated no-redirect, short-timeout probe client.
-    let probe_client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| internal_error(format!("http client: {e}")))?;
+    let (_base, _host, probe_client) = validate_probe_target(
+        &req.api_base,
+        "refusing to connect to a reserved or metadata address",
+    )?;
 
     let endpoint = papered::config::ModelEndpoint {
         api_base: req.api_base,

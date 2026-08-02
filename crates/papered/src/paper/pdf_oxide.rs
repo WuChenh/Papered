@@ -547,7 +547,7 @@ fn extract_and_save_images(
             }
 
             // 2. Dimension gate (short side / long side / area ratio).
-            let (w, h) = match png_dimensions(&tmp_filepath) {
+            let (w, h) = match crate::util::image::png_dimensions(&tmp_filepath) {
                 Some(dims) => dims,
                 None => {
                     let _ = std::fs::remove_file(&tmp_filepath);
@@ -680,19 +680,6 @@ fn compute_file_hash_quick(path: &Path) -> Option<String> {
     let n = file.read(&mut buf).ok()?;
     buf.truncate(n);
     Some(crate::util::sha256_hex(&buf))
-}
-
-/// Read width/height from a PNG file header (IHDR chunk).
-/// PNG layout: 8-byte signature, then 4-byte length, 4-byte "IHDR",
-/// then 4-byte width, 4-byte height (all big-endian).
-fn png_dimensions(path: &Path) -> Option<(u32, u32)> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut buf = [0u8; 24];
-    file.read_exact(&mut buf).ok()?;
-    let w = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
-    let h = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
-    Some((w, h))
 }
 
 /// Reject titles that are clearly non-titles (numeric IDs, too short, etc.).

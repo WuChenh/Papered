@@ -37,9 +37,13 @@ pub(crate) async fn scan_paper_images(
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
-            let reason = std::fs::metadata(&path)
-                .ok()
-                .and_then(|m| evaluate_image(m.len(), png_dimensions(&path), &config));
+            let reason = std::fs::metadata(&path).ok().and_then(|m| {
+                evaluate_image(
+                    m.len(),
+                    papered::util::image::png_dimensions(&path),
+                    &config,
+                )
+            });
             scanned.push(ScannedImage {
                 path,
                 filename,
@@ -143,15 +147,4 @@ pub(crate) async fn prune_stale_figures_for_paper(
         tracing::warn!("Failed to re-insert valid figures for {}: {}", paper_id, e);
     }
     removed_count
-}
-
-/// Read width/height from a PNG file header (IHDR chunk).
-fn png_dimensions(path: &Path) -> Option<(u32, u32)> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut buf = [0u8; 24];
-    file.read_exact(&mut buf).ok()?;
-    let w = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
-    let h = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
-    Some((w, h))
 }

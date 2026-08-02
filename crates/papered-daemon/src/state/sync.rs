@@ -96,6 +96,13 @@ fn log_sync_results(
     }
 }
 
+/// Build an empty report carrying a single run-level error message.
+fn sync_error_report(msg: String) -> papered::sync::SyncReport {
+    let mut r = papered::sync::SyncReport::new();
+    r.errors.push(msg);
+    r
+}
+
 /// Evict finished sync jobs beyond [`MAX_FINISHED_SYNC_JOBS`] so the job map
 /// can't grow forever.
 fn prune_finished_sync_jobs(jobs: &mut std::collections::HashMap<String, SyncJob>) {
@@ -247,50 +254,73 @@ impl SyncSource for DaemonZoteroSource {
 }
 
 impl AppState {
-    pub async fn spawn_lattice_sync(self: &Arc<Self>) {
-        let config = self.config.read().await.lattice_sync.clone();
-
+    /// Cancel the current auto-sync run (if any), abort its task, and respawn
+    /// the runner with fresh configuration. Shared by the Lattice and Zotero
+    /// auto-sync paths — they differ only in the config snapshot, the source,
+    /// and the cancel/task/failure bookkeeping slots.
+    async fn respawn_auto_sync<S: SyncSource>(
+        &self,
+        config: papered::config::BaseSyncConfig,
+        source: S,
+        cancel_slot: &Arc<tokio::sync::Mutex<CancellationToken>>,
+        task_slot: &Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+        failures: &Arc<std::sync::atomic::AtomicU32>,
+        label: &str,
+    ) {
         let cancel = {
-            let mut guard = self.lattice_cancel.lock().await;
+            let mut guard = cancel_slot.lock().await;
             guard.cancel();
             let new = CancellationToken::new();
             *guard = new.clone();
             new
         };
         {
-            let mut task_guard = self.lattice_sync_task.lock().await;
+            let mut task_guard = task_slot.lock().await;
             if let Some(handle) = task_guard.take() {
                 handle.abort();
             }
         }
 
-        if !config.base.enabled {
-            tracing::info!("Lattice auto-sync disabled — aborted any existing task");
+        if !config.enabled {
+            tracing::info!("{label} auto-sync disabled — aborted any existing task");
             return;
         }
 
-        let interval_secs = config.base.interval_secs.max(60);
+        let interval_secs = config.interval_secs.max(60);
         tracing::info!(
-            "Lattice auto-sync enabled (interval: {}s, batch_limit: {})",
+            "{label} auto-sync enabled (interval: {}s, batch_limit: {})",
             interval_secs,
-            config.base.batch_limit
+            config.batch_limit
         );
 
+        let runner = SyncRunner::new(
+            source,
+            Duration::from_secs(interval_secs),
+            cancel,
+            failures.clone(),
+        );
+        let handle = runner.spawn();
+
+        let mut guard = task_slot.lock().await;
+        guard.replace(handle);
+    }
+
+    pub async fn spawn_lattice_sync(self: &Arc<Self>) {
+        let config = self.config.read().await.lattice_sync.clone();
         let source = DaemonLatticeSource {
             store: self.store.clone(),
             import_tx: self.import_tx.clone(),
             state: Arc::downgrade(self),
         };
-        let runner = SyncRunner::new(
+        self.respawn_auto_sync(
+            config.base,
             source,
-            Duration::from_secs(interval_secs),
-            cancel,
-            self.lattice_sync_failures.clone(),
-        );
-        let handle = runner.spawn();
-
-        let mut guard = self.lattice_sync_task.lock().await;
-        guard.replace(handle);
+            &self.lattice_cancel,
+            &self.lattice_sync_task,
+            &self.lattice_sync_failures,
+            "Lattice",
+        )
+        .await;
     }
 
     /// Start the Zotero manual sync worker. Manual sync requests are queued
@@ -320,11 +350,20 @@ impl AppState {
                     guard.clone()
                 };
                 let source = DaemonZoteroSource::new(&worker_state, true);
-                let report = source.run_once(cancel.clone()).await.unwrap_or_else(|e| {
-                    let mut r = papered::sync::SyncReport::new();
-                    r.errors.push(e.to_string());
-                    r
-                });
+                // Isolate each sync run in its own task: a panic in the sync
+                // path must fail this one job, not kill the worker — a dead
+                // worker rejects every later manual sync as sync_busy until
+                // the daemon restarts.
+                let run_cancel = cancel.clone();
+                let report =
+                    match tokio::spawn(async move { source.run_once(run_cancel).await }).await {
+                        Ok(Ok(report)) => report,
+                        Ok(Err(e)) => sync_error_report(e.to_string()),
+                        Err(e) => {
+                            tracing::error!("Zotero sync task died unexpectedly: {e}");
+                            sync_error_report(format!("sync task died unexpectedly: {e}"))
+                        }
+                    };
 
                 let was_cancelled = cancel.is_cancelled();
                 if !was_cancelled {
@@ -357,44 +396,17 @@ impl AppState {
 
     /// Spawn (or respawn) the Zotero auto-sync runner.
     pub async fn spawn_zotero_sync(self: &Arc<Self>) {
-        let cancel = {
-            let mut guard = self.zotero_cancel.lock().await;
-            guard.cancel();
-            let new = CancellationToken::new();
-            *guard = new.clone();
-            new
-        };
-        {
-            let mut task_guard = self.zotero_sync_task.lock().await;
-            if let Some(handle) = task_guard.take() {
-                handle.abort();
-            }
-        }
-
         let config = self.config.read().await.zotero_sync.clone();
-        if !config.base.enabled {
-            tracing::info!("Zotero auto-sync disabled — aborted any existing task");
-            return;
-        }
-
-        let interval_secs = config.base.interval_secs.max(60);
-        tracing::info!(
-            "Zotero auto-sync enabled (interval: {}s, batch_limit: {})",
-            interval_secs,
-            config.base.batch_limit
-        );
-
         let source = DaemonZoteroSource::new(self, true);
-        let runner = SyncRunner::new(
+        self.respawn_auto_sync(
+            config.base,
             source,
-            Duration::from_secs(interval_secs),
-            cancel,
-            self.zotero_sync_failures.clone(),
-        );
-        let handle = runner.spawn();
-
-        let mut guard = self.zotero_sync_task.lock().await;
-        guard.replace(handle);
+            &self.zotero_cancel,
+            &self.zotero_sync_task,
+            &self.zotero_sync_failures,
+            "Zotero",
+        )
+        .await;
     }
 
     pub(crate) async fn save_zotero_since(&self, new_since: u64) {

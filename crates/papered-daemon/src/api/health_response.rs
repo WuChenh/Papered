@@ -69,6 +69,7 @@ impl HealthResponse {
             reembed_total,
             processing_count,
             failed_count,
+            indexing_paused: state.indexing_paused.load(Ordering::Relaxed),
         }
     }
 
@@ -114,6 +115,15 @@ mod tests {
         assert_eq!(response.reembed_total, 0);
         assert_eq!(response.processing_count, 0);
         assert_eq!(response.failed_count, 0);
+        assert!(!response.indexing_paused);
+    }
+
+    #[tokio::test]
+    async fn from_state_reflects_indexing_paused() {
+        let (state, _tmp) = crate::state::test_app_state().await;
+        state.indexing_paused.store(true, Ordering::Relaxed);
+        let response = HealthResponse::from_state(&state, "ok", 0, 0).await;
+        assert!(response.indexing_paused);
     }
 
     #[tokio::test]

@@ -2,11 +2,11 @@
 // ES module — routes self-register on import via app.js.
 // Shared helpers are exported for use by library-detail.js and library-import.js.
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
-import { route } from './router.js?v=2';
-import { openAddModal } from './library-import.js?v=2';
-import './library-detail.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
+import { route } from './router.js?v=1';
+import { openAddModal } from './library-import.js?v=1';
+import './library-detail.js?v=1';
 
 const PAGE_SIZE = 20;
 const POLL_MS = 3000;

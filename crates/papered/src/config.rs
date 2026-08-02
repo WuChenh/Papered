@@ -96,12 +96,6 @@ impl From<(&ProviderConfig, &ModelConfig)> for ModelEndpoint {
     }
 }
 
-impl ModelEndpoint {
-    pub fn has_valid_api_key(&self) -> bool {
-        self.api_key.as_ref().is_some_and(|k| !k.trim().is_empty())
-    }
-}
-
 // ==========================================================================
 // Purposes
 // ==========================================================================
@@ -254,7 +248,11 @@ pub struct IndexingConfig {
 }
 
 const fn default_indexing_concurrency() -> usize {
-    8
+    // Each job holds a heavy per-paper working set (parsed PDF text, chunk
+    // tree, page renders) and runs CPU-bound parse/render stages; a low
+    // default keeps memory bounded and leaves cores for the HTTP server.
+    // Raise via config on high-core machines.
+    3
 }
 const fn default_indexing_queue_size() -> usize {
     2048

@@ -128,7 +128,7 @@ download_pdf = true
 recursive_collections = true
 
 [indexing]
-concurrency = 8             # 1–64
+concurrency = 3             # 1–64; each job holds a heavy per-paper working set — raise only on high-core/high-RAM machines
 queue_size = 2048
 
 [pdf_extraction]

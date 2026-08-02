@@ -1,6 +1,19 @@
 // Shared UI helpers: escaping, formatting, icons, toasts, modals.
 // ES module — imported by the shell and every view module.
 
+// ---- translation languages --------------------------------------------------
+
+// The supported translation target languages, shared by the settings page,
+// the paper-detail translation panel, and the first-run wizard.
+export const TRANSLATION_LANGUAGES = [
+  { value: 'zh-CN', label: 'Chinese (Simplified)' },
+  { value: 'en', label: 'English' },
+  { value: 'fr', label: 'French' },
+  { value: 'de', label: 'German' },
+  { value: 'es', label: 'Spanish' },
+  { value: 'ru', label: 'Russian' }
+];
+
 // ---- escaping ---------------------------------------------------------------
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -463,6 +476,28 @@ export function emptyState(opts) {
     '<h3>' + esc(opts.title || 'Nothing here yet') + '</h3>' +
     (opts.body ? '<p>' + opts.body + '</p>' : '') +
     (opts.action || '') + '</div>';
+}
+
+// A stat tile: big number + label. Numbers are formatted with fmtInt;
+// pre-formatted strings pass through unchanged.
+export function statCard(value, label) {
+  const display = typeof value === 'number' ? fmtInt(value) : String(value ?? '—');
+  return '<div class="stat-card"><div class="stat-value">' + display + '</div>' +
+    '<div class="stat-label">' + esc(label) + '</div></div>';
+}
+
+// True when an API base URL points at the local machine (localhost / 127.0.0.1
+// / ::1). Loopback endpoints may legitimately run without an API key.
+export function isLoopbackBase(apiBase) {
+  let host = String(apiBase || '').trim().toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+    .split('/')[0];
+  if (host.charAt(0) === '[') {
+    host = host.slice(1, host.indexOf(']'));
+  } else if (host.indexOf(':') === host.lastIndexOf(':')) {
+    host = host.split(':')[0];
+  }
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
 }
 
 export function errorState(msg, retryLabel) {

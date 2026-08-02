@@ -172,6 +172,10 @@ async fn main() -> Result<()> {
 
     // --- AppState ---
 
+    let indexing_paused_at_boot = crate::state::index_pause_flag_path(&config).exists();
+    if indexing_paused_at_boot {
+        tracing::info!("Indexing pause flag found — worker pool starts paused");
+    }
     let state = Arc::new(AppState::new(
         store.clone(),
         embedding_arc.clone(),
@@ -182,6 +186,7 @@ async fn main() -> Result<()> {
         indexer,
         import_tx,
         zotero_sync_tx,
+        indexing_paused_at_boot,
     ));
 
     // NOTE: the embedding model is deliberately NOT probed here. A probe is a
@@ -364,6 +369,16 @@ async fn main() -> Result<()> {
 
     // --- Signal handling and graceful shutdown ---
     // Registration files are removed by the RegistrationGuard on return.
+    //
+    // Axum's graceful shutdown waits for *all* in-flight connections to
+    // complete before `serve` returns. Long-lived MCP streamable-HTTP (SSE)
+    // sessions and slow indexing requests (up to the 120s request timeout)
+    // can hold that open indefinitely, which makes `papered stop` appear to
+    // hang. Race the drain against a grace timer armed when the signal
+    // arrives; past the grace window we force-exit (aborting workers) so
+    // `papered stop` always terminates the daemon within a bounded time.
+    const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+    let (signal_tx, signal_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown = async move {
         #[cfg(unix)]
         {
@@ -376,13 +391,36 @@ async fn main() -> Result<()> {
             let _ = tokio::signal::ctrl_c().await;
             tracing::info!("Received Ctrl+C, shutting down gracefully");
         }
+        let _ = signal_tx.send(());
     };
 
     // --- Serve ---
-    axum::serve(listener, app)
+    let server = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
-        .await
-        .map_err(|e| papered::PaperedError::io_other(e.to_string()))?;
+        .into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => {
+            result.map_err(|e| papered::PaperedError::io_other(e.to_string()))?;
+        }
+        // The timer starts only once the shutdown signal has been received.
+        _ = async {
+            let _ = signal_rx.await;
+            tokio::time::sleep(SHUTDOWN_GRACE).await;
+        } => {
+            tracing::warn!(
+                "Graceful shutdown exceeded {}s — aborting background tasks and forcing exit",
+                SHUTDOWN_GRACE.as_secs()
+            );
+            background_tasks.abort_all();
+            if let Some(handle) = state.zotero_sync_worker_handle.lock().await.take() {
+                handle.abort();
+            }
+            return Err(papered::PaperedError::io_other(
+                "daemon shutdown timed out; forced exit",
+            ));
+        }
+    }
 
     if let Some(handle) = state.zotero_sync_worker_handle.lock().await.take() {
         handle.abort();

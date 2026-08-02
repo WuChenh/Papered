@@ -3,10 +3,10 @@
 // so it survives navigation within the session. Supports scoped mode via
 // #/ask?paper=<id>, which restricts retrieval to a single paper.
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
-import { route, navigate } from './router.js?v=2';
-import { renderMarkdown } from './markdown.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
+import { route, navigate } from './router.js?v=1';
+import { renderMarkdown } from './markdown.js?v=1';
 
 // ---- session state ---------------------------------------------------------
 
@@ -322,7 +322,7 @@ route('/ask', {
       '<p class="page-sub">Chat with your library — answers cite the papers they come from</p></div>' +
       controlsHTML() +
       '<div class="chat-thread mt-4" id="chat-thread" aria-live="polite"></div>' +
-      '<div class="chat-input-bar"><div class="chat-input-row">' +
+      '<div class="chat-input-bar mt-6"><div class="chat-input-row">' +
       '<textarea id="ask-input" class="textarea" rows="1" aria-label="Ask a question about your papers" ' +
       'placeholder="Ask a question about your papers…"></textarea>' +
       '<button type="button" class="btn primary" id="ask-send">' + U.icon('send', 15) + ' Send</button>' +

@@ -458,10 +458,23 @@ async fn do_reindex(
         )));
     }
     let previous_status = paper.status;
+    let previous_error = paper.error_message.clone();
+    let previous_retry = paper.retry_count;
+    // Persist the status transition via update_paper_status — update_paper
+    // only writes metadata columns and would silently drop it.
+    state
+        .store
+        .update_paper_status(
+            paper_id,
+            PaperStatus::Processing.as_str(),
+            Some(""),
+            Some(0),
+        )
+        .await
+        .map_err(map_err)?;
     paper.status = PaperStatus::Processing;
     paper.retry_count = 0;
     paper.error_message = None;
-    state.store.update_paper(&paper).await.map_err(map_err)?;
 
     let reembed_only = !sections_only && has_sections && lacks_file;
 
@@ -474,8 +487,15 @@ async fn do_reindex(
         reembed_only,
     };
     if state.import_tx.try_send(job).is_err() {
-        paper.status = previous_status;
-        state.store.update_paper(&paper).await.map_err(map_err)?;
+        let _ = state
+            .store
+            .update_paper_status(
+                paper_id,
+                previous_status.as_str(),
+                previous_error.as_deref(),
+                Some(previous_retry),
+            )
+            .await;
         return Err(service_unavailable(
             ERR_QUEUE_CLOSED,
             "Import channel full, try again later",

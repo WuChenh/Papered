@@ -115,14 +115,10 @@ pub enum PaperedError {
 }
 
 impl PaperedError {
-    error_with_source!(PdfParse, SectionExtraction, Config, NotFound);
+    error_with_source!(PdfParse, Config, NotFound);
 
     pub fn invalid_argument(msg: impl Into<String>) -> Self {
         Self::InvalidArgument(msg.into())
-    }
-
-    pub fn database(msg: impl Into<String>) -> Self {
-        Self::Database(msg.into())
     }
 
     pub fn indexing(msg: impl Into<String>) -> Self {
@@ -131,10 +127,6 @@ impl PaperedError {
 
     pub fn search(msg: impl Into<String>) -> Self {
         Self::Search(msg.into())
-    }
-
-    pub fn llm_generation(msg: impl Into<String>) -> Self {
-        Self::LlmGeneration(msg.into())
     }
 
     pub fn json_repair(msg: impl Into<String>) -> Self {
@@ -151,13 +143,6 @@ impl PaperedError {
 
     pub fn cancelled(msg: impl Into<String>) -> Self {
         Self::Cancelled(msg.into())
-    }
-
-    pub fn embedding_api(status: u16, message: impl Into<String>) -> Self {
-        Self::EmbeddingApi {
-            status,
-            message: message.into(),
-        }
     }
 
     /// Convenience constructor for `Io(std::io::Error::other(...))` —
@@ -202,7 +187,6 @@ impl PaperedError {
             ApiError {
                 code: code.to_string(),
                 message,
-                details: None,
             },
         )
     }
@@ -219,8 +203,6 @@ impl PaperedError {
 pub struct ApiError {
     pub code: String,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<serde_json::Value>,
 }
 
 impl ApiError {
@@ -228,13 +210,7 @@ impl ApiError {
         Self {
             code: code.into(),
             message: message.into(),
-            details: None,
         }
-    }
-
-    pub fn with_details(mut self, details: serde_json::Value) -> Self {
-        self.details = Some(details);
-        self
     }
 }
 

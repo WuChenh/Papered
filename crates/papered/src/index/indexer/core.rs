@@ -195,10 +195,16 @@ impl Indexer {
             )
             .await;
 
-        // 6. Generate semantic chunks
+        // 6. Generate semantic chunks (CPU-bound — offload to the blocking pool)
         let chunk_start = std::time::Instant::now();
-        let mut chunk_tree =
-            Self::step6_generate_chunks(&paper.id, extracted.is_structured, &clean_text)?;
+        let chunk_paper_id = paper.id.clone();
+        let chunk_text = clean_text.clone();
+        let is_structured = extracted.is_structured;
+        let mut chunk_tree = tokio::task::spawn_blocking(move || {
+            Self::step6_generate_chunks(&chunk_paper_id, is_structured, &chunk_text)
+        })
+        .await
+        .map_err(|e| PaperedError::Indexing(format!("Chunking task failed: {e}")))??;
         tracing::info!(
             "Chunking took {:.1}s ({} chunks)",
             chunk_start.elapsed().as_secs_f64(),
@@ -222,6 +228,9 @@ impl Indexer {
         // 8. Persist paper metadata and chunks immediately
         self.step8_persist_paper_and_chunks(&paper, &chunk_tree)
             .await?;
+        // Chunks are persisted — free the tree before the long LLM/embedding
+        // stages below so its memory is not held for the rest of the job.
+        drop(chunk_tree);
 
         // 9. Section extraction and figure extraction are independent LLM
         // tasks — run them in parallel. Figure extraction uses a separate
@@ -264,8 +273,16 @@ impl Indexer {
 
         if !llm_figures.is_empty() {
             // Primary: LLM figures + pdf_oxide page location + rendering.
-            self.index_llm_figures(path, &paper, &llm_figures, &paper_data_dir)
-                .await?;
+            // Any failure here degrades to text-only indexing — the paper's
+            // text, sections, and vectors are already persisted by step 8, so
+            // a broken figure must not fail the whole paper (mirrors the
+            // MinerU fallback branch below).
+            if let Err(e) = self
+                .index_llm_figures(path, &paper, &llm_figures, &paper_data_dir)
+                .await
+            {
+                tracing::warn!("Failed to index LLM figures for {}: {}", paper.id, e);
+            }
         } else {
             // Fallback: MinerU figures.
             let rich_data =
@@ -322,8 +339,14 @@ impl Indexer {
             let data_dir = self.config.data_dir.clone();
             let paper_id = paper.id.clone();
             let path_owned = path.to_path_buf();
-            match crate::cover::generate_cover(&path_owned, &paper_id, &data_dir) {
-                Ok(Some(cover_rel)) => {
+            // Cover rendering (150 DPI raster + Lanczos3 resize) is CPU-bound —
+            // offload to the blocking pool.
+            let cover_result = tokio::task::spawn_blocking(move || {
+                crate::cover::generate_cover(&path_owned, &paper_id, &data_dir)
+            })
+            .await;
+            match cover_result {
+                Ok(Ok(Some(cover_rel))) => {
                     paper.cover_path = Some(cover_rel);
                     if let Err(e) = self.store.update_paper(&paper).await {
                         tracing::warn!(
@@ -332,13 +355,19 @@ impl Indexer {
                         );
                     }
                 }
-                Ok(None) => {
+                Ok(Ok(None)) => {
                     paper.cover_path = None;
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        paper_id = %paper.id,
+                        "Cover generation failed: {e}"
+                    );
                 }
                 Err(e) => {
                     tracing::warn!(
                         paper_id = %paper.id,
-                        "Cover generation failed: {e}"
+                        "Cover generation task failed: {e}"
                     );
                 }
             }
@@ -356,7 +385,12 @@ impl Indexer {
         is_reindex: bool,
         paper_id: Option<&str>,
     ) -> Result<(String, String, std::path::PathBuf)> {
-        let file_hash = compute_file_hash(path)?;
+        // Hashing streams the whole file — offload to the blocking pool so the
+        // async runtime stays responsive for HTTP requests.
+        let path_buf = path.to_path_buf();
+        let file_hash = tokio::task::spawn_blocking(move || compute_file_hash(&path_buf))
+            .await
+            .map_err(|e| PaperedError::Indexing(format!("File hash task failed: {e}")))??;
         if !is_reindex && let Some(existing) = self.store.get_paper_by_file_hash(&file_hash).await?
         {
             return Err(PaperedError::Duplicate {

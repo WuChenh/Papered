@@ -1,15 +1,42 @@
 use papered::AppConfig;
 use papered::error::Result;
 
+/// Send a termination signal to the running daemon.
+///
+/// Prefers the exact PID from the PID file over `pkill -f`, which can also
+/// match unrelated processes whose command line happens to contain the daemon
+/// binary name (e.g. a `bash -c` wrapper that spawned it).
 pub fn stop_daemon() {
     if cfg!(windows) {
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/IM", "papered-daemon.exe"])
             .status();
+    } else if let Some(pid) = papered::util::process::running_daemon_pid() {
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
     } else {
         let _ = std::process::Command::new("pkill")
             .args(["-f", "papered-daemon"])
             .status();
+    }
+}
+
+/// `true` when no daemon process is alive and no registration files remain.
+fn daemon_fully_stopped() -> bool {
+    let pid = papered::util::process::running_daemon_pid();
+    let port_file = papered::routes::daemon_port_file();
+    let pid_file = papered::routes::daemon_pid_file();
+    pid.is_none() && !port_file.exists() && !pid_file.exists()
+}
+
+/// Wait up to `deadline` (from now) for the daemon to exit and its
+/// registration files to disappear.
+async fn wait_for_daemon_stop(deadline: std::time::Duration) {
+    let deadline = std::time::Instant::now() + deadline;
+    while std::time::Instant::now() < deadline {
+        if daemon_fully_stopped() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 }
 
@@ -31,19 +58,37 @@ pub async fn handle_stop() -> Result<()> {
     println!("{}", "Stopping daemon...".bold());
     stop_daemon();
 
-    for _ in 0..20 {
-        if !port_file.exists() && !pid_file.exists() {
-            println!("{}", "Daemon stopped.".green().bold());
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // The daemon itself force-exits after a 10s grace once SIGTERM arrives,
+    // so 12s covers the graceful path; escalate to SIGKILL past it.
+    wait_for_daemon_stop(std::time::Duration::from_secs(12)).await;
+    if daemon_fully_stopped() {
+        println!("{}", "Daemon stopped.".green().bold());
+        return Ok(());
     }
 
-    println!(
-        "{} {}",
-        "Daemon stopped.".green().bold(),
-        "(registration files may remain — ignore or remove manually)".dimmed()
-    );
+    // Escalate: SIGKILL the daemon, then clean up its stale registration
+    // files so the next start does not trip over them.
+    #[cfg(unix)]
+    if let Some(pid) = papered::util::process::running_daemon_pid() {
+        println!(
+            "{}",
+            format!("Graceful stop timed out — forcing kill of pid {pid}...").yellow()
+        );
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/IM", "papered-daemon.exe"])
+            .status();
+    }
+
+    // A SIGKILLed daemon never got to remove these; a gracefully-stopped one
+    // already did (remove_file on a missing file is a no-op error, ignored).
+    let _ = std::fs::remove_file(&pid_file);
+    let _ = std::fs::remove_file(&port_file);
+    println!("{}", "Daemon stopped.".green().bold());
     Ok(())
 }
 
@@ -54,7 +99,18 @@ pub async fn handle_reset(force: bool, all: bool) -> Result<()> {
     let data_dir = &config.data_dir;
 
     stop_daemon();
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Deleting the DB while the daemon still holds its file lock would leave
+    // stale -wal/-shm files and a Locking error on the next start. Give it
+    // the same bounded grace as `papered stop`, then SIGKILL leftovers.
+    wait_for_daemon_stop(std::time::Duration::from_secs(12)).await;
+    if !daemon_fully_stopped()
+        && let Some(pid) = papered::util::process::running_daemon_pid()
+    {
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    let _ = std::fs::remove_file(papered::routes::daemon_pid_file());
+    let _ = std::fs::remove_file(papered::routes::daemon_port_file());
 
     let mut paths_to_remove: Vec<std::path::PathBuf> = vec![
         data_dir.join("papered.db"),

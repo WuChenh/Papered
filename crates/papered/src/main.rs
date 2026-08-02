@@ -5,7 +5,7 @@ use cli::{ConfigAction, LatticeAction, ModelAction};
 use colored::Colorize;
 use papered::client::DaemonClient;
 use papered::error::PaperedError;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[derive(Parser)]
@@ -219,6 +219,53 @@ fn daemon_log_file() -> PathBuf {
     base.join("logs").join("daemon.log")
 }
 
+/// Maximum size of `daemon.log` before it is rotated to `daemon.log.1` on the
+/// next daemon start. With a single backup kept, total disk usage stays
+/// bounded at ~2x this value.
+const DAEMON_LOG_MAX_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Rotate `daemon.log` to `daemon.log.1` when it exceeds `max_bytes`, keeping
+/// at most one backup. A missing file is a no-op; failures (e.g. permissions)
+/// are non-fatal and reported as `false` so the caller can proceed to append
+/// regardless.
+fn rotate_daemon_log_if_oversized(path: &Path, max_bytes: u64) -> bool {
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.len() > max_bytes => {
+            // Append ".1" to the file name itself, not via with_extension, so
+            // the backup is always "daemon.log.1" regardless of the original
+            // name's extension.
+            let mut backup = path.as_os_str().to_os_string();
+            backup.push(".1");
+            let backup = PathBuf::from(backup);
+            // std::fs::rename does not overwrite an existing destination on
+            // Windows; drop a stale backup first so we keep exactly one.
+            let _ = std::fs::remove_file(&backup);
+            std::fs::rename(path, backup).is_ok()
+        }
+        _ => false,
+    }
+}
+
+/// Open the daemon log for appending, returning paired handles for stdout and
+/// stderr. `None` when the log directory or file cannot be created.
+fn daemon_log_stdio() -> Option<(std::fs::File, std::fs::File)> {
+    let log_file = daemon_log_file();
+    // Rotate before appending so the log stays bounded. Failure is non-fatal:
+    // appending to the current file continues either way.
+    let _ = rotate_daemon_log_if_oversized(&log_file, DAEMON_LOG_MAX_BYTES);
+    let out = std::fs::create_dir_all(log_file.parent()?)
+        .ok()
+        .and_then(|_| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_file)
+                .ok()
+        })?;
+    let err = out.try_clone().ok()?;
+    Some((out, err))
+}
+
 fn spawn_daemon() -> papered::error::Result<()> {
     let daemon_bin = find_daemon_binary()
         .ok_or_else(|| papered::PaperedError::io_other("papered-daemon binary not found. Please build it (cargo build --bin papered-daemon) or start the daemon manually."))?;
@@ -229,20 +276,8 @@ fn spawn_daemon() -> papered::error::Result<()> {
     cmd.envs(std::env::vars());
     cmd.stdin(std::process::Stdio::null());
 
-    let log_file = daemon_log_file();
-    let log_target = log_file
-        .parent()
-        .and_then(|dir| std::fs::create_dir_all(dir).ok())
-        .and_then(|_| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_file)
-                .ok()
-        });
-    match log_target {
-        Some(out) => {
-            let err = out.try_clone().map_err(PaperedError::Io)?;
+    match daemon_log_stdio() {
+        Some((out, err)) => {
             cmd.stdout(out).stderr(err);
         }
         None => {
@@ -376,6 +411,17 @@ async fn async_main() -> papered::error::Result<()> {
         cmd.envs(std::env::vars());
         if !foreground {
             cmd.stdin(std::process::Stdio::null());
+            // A backgrounded daemon outlives this terminal — send its output
+            // to the daemon log instead of inheriting (and losing) our stdout.
+            match daemon_log_stdio() {
+                Some((out, err)) => {
+                    cmd.stdout(out).stderr(err);
+                }
+                None => {
+                    cmd.stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null());
+                }
+            }
         }
 
         let mut child = cmd.spawn().map_err(PaperedError::Io)?;
@@ -489,5 +535,60 @@ mod ui_command_tests {
     #[test]
     fn ui_url_appends_ui_path() {
         assert_eq!(ui_url("http://127.0.0.1:9321"), "http://127.0.0.1:9321/ui/");
+    }
+}
+
+#[cfg(test)]
+mod daemon_log_rotation_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn rotates_log_that_exceeds_threshold() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("daemon.log");
+        fs::write(&log, vec![b'x'; 100]).unwrap();
+
+        assert!(rotate_daemon_log_if_oversized(&log, 50));
+        assert!(!log.exists());
+        assert_eq!(
+            fs::read(dir.path().join("daemon.log.1")).unwrap().len(),
+            100
+        );
+    }
+
+    #[test]
+    fn leaves_log_at_or_under_threshold_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("daemon.log");
+        fs::write(&log, vec![b'x'; 50]).unwrap();
+
+        assert!(!rotate_daemon_log_if_oversized(&log, 50));
+        assert!(log.exists());
+        assert!(!dir.path().join("daemon.log.1").exists());
+    }
+
+    #[test]
+    fn missing_log_is_a_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("daemon.log");
+
+        assert!(!rotate_daemon_log_if_oversized(&log, 50));
+        assert!(!dir.path().join("daemon.log.1").exists());
+    }
+
+    #[test]
+    fn rotation_replaces_an_existing_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("daemon.log");
+        fs::write(&log, vec![b'x'; 100]).unwrap();
+        fs::write(dir.path().join("daemon.log.1"), b"stale").unwrap();
+
+        assert!(rotate_daemon_log_if_oversized(&log, 50));
+        assert!(!log.exists());
+        assert_eq!(
+            fs::read(dir.path().join("daemon.log.1")).unwrap().len(),
+            100
+        );
     }
 }

@@ -1,9 +1,9 @@
 // Sync view: Zotero & Lattice sync management. Registers route('/sync').
 // Each service card renders independently — one failing never blocks the other.
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
-import { route } from './router.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
+import { route } from './router.js?v=1';
 
 // ---- shared helpers -------------------------------------------------------
 
@@ -11,6 +11,17 @@ import { route } from './router.js?v=2';
 function isTerminalStatus(status) {
   const s = String(status || '').toLowerCase();
   return s !== 'pending' && s !== 'running';
+}
+
+// Transport-level failures (daemon unreachable, dropped connection) reject
+// with a bare TypeError and no HTTP status — the server message is
+// unavailable, so surface an actionable hint instead of the browser's
+// cryptic "Failed to fetch".
+function failMessage(e) {
+  if (e instanceof TypeError) {
+    return 'Cannot reach the Papered daemon — it may have stopped. Check that it is running, then retry.';
+  }
+  return e && e.message ? e.message : String(e);
 }
 
 function statusBadge(st) {
@@ -33,12 +44,12 @@ function reportHTML(report) {
       '<div class="stat-label">Already up to date — no changes since last sync</div></div>';
   }
   let html = `<div class="stat-grid">${
-    statCard(report.imported, 'Imported') +
-    statCard(report.pdf_found, 'PDFs found') +
-    statCard(report.metadata_only, 'Metadata only') +
-    statCard(report.skipped, 'Skipped') +
-    statCard(report.removed, 'Removed') +
-    statCard(errors.length, 'Errors')
+    U.statCard(report.imported, 'Imported') +
+    U.statCard(report.pdf_found, 'PDFs found') +
+    U.statCard(report.metadata_only, 'Metadata only') +
+    U.statCard(report.skipped, 'Skipped') +
+    U.statCard(report.removed, 'Removed') +
+    U.statCard(errors.length, 'Errors')
   }</div>`;
   if (errors.length) {
     html += `<div class="mt-2">${errors.slice(0, 10).map((e) =>
@@ -58,10 +69,6 @@ function reportHTML(report) {
   return html;
 }
 
-function statCard(value, label) {
-  return `<div class="stat-card"><div class="stat-value">${U.fmtInt(value || 0)}</div>` +
-    `<div class="stat-label">${U.esc(label)}</div></div>`;
-}
 
 // Error block inside a card with a Retry button (wired by the caller).
 function cardErrorHTML(msg) {
@@ -78,13 +85,12 @@ function wireRetry(card, init) {
 // Interactive collection selector with checkboxes for Zotero sync scope.
 function wireCollectionSelector(btn, panel, selectedKeys, recursive) {
   let loaded = false;
-  btn.addEventListener('click', () => {
-    const open = panel.classList.toggle('hidden') === false;
-    btn.setAttribute('aria-expanded', String(open));
-    if (loaded || !open) return;
+
+  function load() {
     loaded = true;
     panel.innerHTML = U.spinner('Loading collections…');
     API.zoteroCollections().then((res) => {
+      if (!panel.isConnected) return;
       const items = res.collections || [];
       if (!items.length) {
         panel.innerHTML = '<p class="muted small">No collections found in Zotero.</p>';
@@ -153,8 +159,20 @@ function wireCollectionSelector(btn, panel, selectedKeys, recursive) {
           .forEach((el) => { el.checked = false; });
       });
     }).catch((e) => {
-      panel.innerHTML = `<p class="small text-err">${U.esc(e.message)}</p>`;
+      if (!panel.isConnected) return;
+      // Keep the panel open and let the user retry: reset `loaded` so the
+      // selector re-fetches on the next open, and offer an inline Retry.
+      loaded = false;
+      panel.innerHTML = cardErrorHTML(failMessage(e));
+      wireRetry(panel, load);
     });
+  }
+
+  btn.addEventListener('click', () => {
+    const open = panel.classList.toggle('hidden') === false;
+    btn.setAttribute('aria-expanded', String(open));
+    if (loaded || !open) return;
+    load();
   });
 }
 
@@ -164,13 +182,12 @@ function wireCollectionSelector(btn, panel, selectedKeys, recursive) {
 // — sub-collections are separate entries with their own names/paths.
 function wireLatticeCollectionSelector(btn, panel, selectedNames) {
   let loaded = false;
-  btn.addEventListener('click', () => {
-    const open = panel.classList.toggle('hidden') === false;
-    btn.setAttribute('aria-expanded', String(open));
-    if (loaded || !open) return;
+
+  function load() {
     loaded = true;
     panel.innerHTML = U.spinner('Loading collections…');
     API.latticeCollections().then((res) => {
+      if (!panel.isConnected) return;
       const items = res.collections || [];
       if (!items.length) {
         panel.innerHTML = '<p class="muted small">No collections found in Lattice.</p>';
@@ -223,8 +240,20 @@ function wireLatticeCollectionSelector(btn, panel, selectedNames) {
           .forEach((el) => { el.checked = false; });
       });
     }).catch((e) => {
-      panel.innerHTML = `<p class="small text-err">${U.esc(e.message)}</p>`;
+      if (!panel.isConnected) return;
+      // Keep the panel open and let the user retry: reset `loaded` so the
+      // selector re-fetches on the next open, and offer an inline Retry.
+      loaded = false;
+      panel.innerHTML = cardErrorHTML(failMessage(e));
+      wireRetry(panel, load);
     });
+  }
+
+  btn.addEventListener('click', () => {
+    const open = panel.classList.toggle('hidden') === false;
+    btn.setAttribute('aria-expanded', String(open));
+    if (loaded || !open) return;
+    load();
   });
 }
 
@@ -275,8 +304,9 @@ function initZoteroCard(card) {
           showProgress(reportHTML(res.report));
           U.toast('Sync complete — ' + U.fmtInt(res.report.imported || 0) + ' imported', 'success');
         } else if (status === 'failed') {
-          showProgress(`<p class="small text-err">Sync failed.${
-            res.message ? ' ' + U.esc(res.message) : ''}</p>`);
+          showProgress(cardErrorHTML('Sync failed.' +
+            (res.message ? ' ' + res.message : '')));
+          wireRetry(card, startSync);
         } else if (status === 'cancelled' || status === 'canceled') {
           showProgress('<p class="muted small">Sync cancelled.</p>');
         } else {
@@ -285,7 +315,12 @@ function initZoteroCard(card) {
       }).catch((e) => {
         if (!card.isConnected) return;
         setSyncing(false);
-        showProgress(`<p class="small text-err">${U.esc(e.message)}</p>`);
+        showProgress(cardErrorHTML(failMessage(e)));
+        // The sync job keeps running server-side — retry resumes polling it.
+        wireRetry(card, () => {
+          setSyncing(true);
+          poll(syncId);
+        });
       });
     }, 2000);
   }
@@ -300,11 +335,11 @@ function initZoteroCard(card) {
     }).catch((e) => {
       if (!card.isConnected) return;
       if (e.code === 'sync_busy' || e.status === 503) {
-        showProgress('');
-        progressEl().classList.add('hidden');
+        showProgress('<p class="muted small">A sync is already running — check back shortly.</p>');
         U.toast('A sync is already running', 'info');
       } else {
-        showProgress(`<p class="small text-err">${U.esc(e.message)}</p>`);
+        showProgress(cardErrorHTML(failMessage(e)));
+        wireRetry(card, startSync);
       }
     });
   }
@@ -381,7 +416,7 @@ function initZoteroCard(card) {
     }).catch((e) => {
       if (!card.isConnected) return;
       card.querySelector('#zotero-badge').innerHTML = U.badge('Unavailable', 'muted');
-      card.querySelector('#zotero-body').innerHTML = cardErrorHTML(e.message);
+      card.querySelector('#zotero-body').innerHTML = cardErrorHTML(failMessage(e));
       wireRetry(card, init);
     });
   }
@@ -433,8 +468,9 @@ function initLatticeCard(card) {
       U.toast('Sync complete — ' + U.fmtInt(report.imported || 0) + ' imported', 'success');
     }).catch((e) => {
       if (!card.isConnected) return;
-      showProgress(`<p class="small text-err">${U.esc(e.message)}</p>`);
+      showProgress(cardErrorHTML(failMessage(e)));
       U.toast('Lattice sync failed', 'error');
+      wireRetry(card, startSync);
     }).finally(() => {
       if (card.isConnected) setSyncing(false);
     });
@@ -501,7 +537,8 @@ function initLatticeCard(card) {
       wireImportButtons(resultsEl);
     }).catch((e) => {
       if (!card.isConnected) return;
-      resultsEl.innerHTML = `<p class="small text-err">${U.esc(e.message)}</p>`;
+      resultsEl.innerHTML = cardErrorHTML(failMessage(e));
+      wireRetry(card, runSearch);
     });
   }
 
@@ -594,7 +631,7 @@ function initLatticeCard(card) {
       const hint = (e.code === 'lattice_error' || e.status === 502)
         ? 'Lattice is not configured on this daemon.'
         : null;
-      renderUnavailable(e.message, hint);
+      renderUnavailable(failMessage(e), hint);
     });
   }
 

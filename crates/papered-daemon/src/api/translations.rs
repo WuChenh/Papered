@@ -387,16 +387,15 @@ pub async fn get_translations(
     Query(query): Query<TranslationQuery>,
 ) -> ApiResult<TranslationsListResponse> {
     validate_paper_id(&id)?;
-    let lang = query.lang.unwrap_or_else(|| {
-        // Will be overridden below; we need the config default.
-        String::new()
-    });
-
-    let target_lang = if lang.is_empty() {
-        let config = state.config.read().await;
-        config.translation.target_language.clone()
-    } else {
-        lang
+    let target_lang = match query.lang.as_deref() {
+        Some(lang) if !lang.is_empty() => lang.to_string(),
+        _ => state
+            .config
+            .read()
+            .await
+            .translation
+            .target_language
+            .clone(),
     };
 
     let translations = state

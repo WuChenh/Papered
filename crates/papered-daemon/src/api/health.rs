@@ -7,7 +7,7 @@ use self::image_quality::{prune_stale_figures_for_paper, scan_paper_images};
 use super::types::{
     ApiResult, BadImageRef, CleanupResponse, DataQualityResponse, DuplicateGroupsResponse,
     DuplicatePaperSummary, HealthResponse, ImageQualityResponse, KbHealthResponse,
-    MissingFigureRef, PaperQualityIssue, ServiceHealthResponse, map_err,
+    MissingFigureRef, PaperQualityIssue, PaperRefResponse, ServiceHealthResponse, map_err,
 };
 
 mod image_quality;
@@ -36,21 +36,33 @@ pub async fn v1_health(State(state): State<Arc<AppState>>) -> ApiResult<HealthRe
 
 pub async fn kb_health(State(state): State<Arc<AppState>>) -> ApiResult<KbHealthResponse> {
     let data_dir = state.config.read().await.data_dir.clone();
-    let papers_without_vectors = state
-        .store
-        .papers_without_vectors()
-        .await
-        .map_err(map_err)?;
+    let to_ref = |v: Vec<papered::store::vector::PaperRef>| {
+        v.into_iter()
+            .map(|p| PaperRefResponse {
+                id: p.id,
+                title: p.title,
+            })
+            .collect()
+    };
+    let papers_without_vectors = to_ref(
+        state
+            .store
+            .papers_without_vectors()
+            .await
+            .map_err(map_err)?,
+    );
     let orphaned_vector_paper_ids = state
         .store
         .orphaned_vector_paper_ids()
         .await
         .map_err(map_err)?;
-    let papers_with_missing_files = state
-        .store
-        .papers_with_missing_files()
-        .await
-        .map_err(map_err)?;
+    let papers_with_missing_files = to_ref(
+        state
+            .store
+            .papers_with_missing_files()
+            .await
+            .map_err(map_err)?,
+    );
     let raw_missing = state
         .store
         .figures_with_missing_images(&data_dir)
@@ -58,9 +70,10 @@ pub async fn kb_health(State(state): State<Arc<AppState>>) -> ApiResult<KbHealth
         .map_err(map_err)?;
     let figures_with_missing_images: Vec<MissingFigureRef> = raw_missing
         .into_iter()
-        .map(|(paper_id, figure_id)| MissingFigureRef {
-            paper_id,
-            figure_id,
+        .map(|f| MissingFigureRef {
+            paper_id: f.paper_id,
+            figure_id: f.figure_id,
+            paper_title: f.paper_title,
         })
         .collect();
     let orphaned_directories = state
@@ -143,12 +156,12 @@ pub async fn cleanup_health(State(state): State<Arc<AppState>>) -> ApiResult<Cle
         .await
         .map_err(map_err)?;
     let removed_set: std::collections::HashSet<String> = removed.iter().cloned().collect();
-    for id in &without_vectors {
-        if !removed_set.contains(id) && !metadata_only.contains(id) {
-            if let Err(e) = state.store.delete_paper(id).await {
-                tracing::warn!("Failed to delete paper without vectors {}: {}", id, e);
+    for pr in &without_vectors {
+        if !removed_set.contains(&pr.id) && !metadata_only.contains(&pr.id) {
+            if let Err(e) = state.store.delete_paper(&pr.id).await {
+                tracing::warn!("Failed to delete paper without vectors {}: {}", pr.id, e);
             } else {
-                removed.push(id.clone());
+                removed.push(pr.id.clone());
             }
         }
     }
@@ -219,8 +232,8 @@ pub async fn cleanup_health(State(state): State<Arc<AppState>>) -> ApiResult<Cle
         .await
         .map_err(map_err)?;
     let mut affected_papers = std::collections::HashSet::new();
-    for (paper_id, _figure_id) in missing_figures {
-        affected_papers.insert(paper_id);
+    for f in missing_figures {
+        affected_papers.insert(f.paper_id);
     }
     let mut removed_figures = 0usize;
     for paper_id in affected_papers {

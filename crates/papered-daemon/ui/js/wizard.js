@@ -2,8 +2,8 @@
 // → verify state machine. Exports renderWizard(container, onComplete);
 // app.js calls it when the daemon reports needs_setup.
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
 
 // ---- presets --------------------------------------------------------------
 
@@ -42,17 +42,6 @@ const PRESETS = {
 // ---- helpers ---------------------------------------------------------------
 
 // True when an API base URL points at the local machine (no key needed).
-function isLoopbackBase(apiBase) {
-  let host = String(apiBase || '').trim().toLowerCase()
-    .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
-    .split('/')[0];
-  if (host.charAt(0) === '[') {
-    host = host.slice(1, host.indexOf(']'));
-  } else if (host.indexOf(':') === host.lastIndexOf(':')) {
-    host = host.split(':')[0];
-  }
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
-}
 
 export function renderWizard(container, onComplete) {
   renderWelcome();
@@ -113,7 +102,7 @@ export function renderWizard(container, onComplete) {
   // Step 2 (API key) is skipped for keyless presets and for loopback
   // api_base URLs — a local endpoint needs no key.
   function flow(w) {
-    return (w.needsKey && !isLoopbackBase(w.apiBase))
+    return (w.needsKey && !U.isLoopbackBase(w.apiBase))
       ? ['provider', 'key', 'providers', 'models', 'language', 'verify']
       : ['provider', 'providers', 'models', 'language', 'verify'];
   }
@@ -203,7 +192,7 @@ export function renderWizard(container, onComplete) {
       const p = w.current.providers[k];
       opts.push({
         key: k, label: k, apiBase: p.api_base || '',
-        keyless: !p.api_key && !isLoopbackBase(p.api_base || '')
+        keyless: !p.api_key && !U.isLoopbackBase(p.api_base || '')
       });
     });
     w.extraProviders.forEach((p) => {
@@ -232,7 +221,7 @@ export function renderWizard(container, onComplete) {
     const key = roleProviderKey(w, role);
     if (key === w.providerKey) return null;
     const existing = (w.current.providers || {})[key];
-    if (!existing || existing.api_key || isLoopbackBase(existing.api_base || '')) return null;
+    if (!existing || existing.api_key || U.isLoopbackBase(existing.api_base || '')) return null;
     return { key: key };
   }
 
@@ -434,12 +423,12 @@ export function renderWizard(container, onComplete) {
         setStepError('Enter the primary provider name and API base URL.');
         return;
       }
-      if (!resolvedKey(w) && !isLoopbackBase(w.apiBase)) {
+      if (!resolvedKey(w) && !U.isLoopbackBase(w.apiBase)) {
         setStepError('The primary provider needs an API key.');
         return;
       }
       const incomplete = w.extraProviders.filter((p) =>
-        !p.apiBase || (!p.apiKey && !isLoopbackBase(p.apiBase)))[0];
+        !p.apiBase || (!p.apiKey && !U.isLoopbackBase(p.apiBase)))[0];
       if (incomplete) {
         setStepError("Complete every added provider's API base URL and API key, or remove it.");
         return;
@@ -513,7 +502,7 @@ export function renderWizard(container, onComplete) {
       }
       const keylessRole = ['chat', 'embedding', 'reranker'].filter((role) => {
         const p = providerForRole(w, role);
-        return !p.apiKey && !isLoopbackBase(p.apiBase);
+        return !p.apiKey && !U.isLoopbackBase(p.apiBase);
       })[0];
       if (keylessRole) {
         setStepError('The ' + keylessRole +
@@ -527,14 +516,7 @@ export function renderWizard(container, onComplete) {
 
   // ---- step 4b: language preference ----
 
-  const WIZARD_LANGUAGES = [
-    { value: 'zh-CN', label: 'Chinese (Simplified)' },
-    { value: 'en', label: 'English' },
-    { value: 'fr', label: 'French' },
-    { value: 'de', label: 'German' },
-    { value: 'es', label: 'Spanish' },
-    { value: 'ru', label: 'Russian' }
-  ];
+  const WIZARD_LANGUAGES = U.TRANSLATION_LANGUAGES;
 
   function stepLanguage(w, f) {
     const langOpts = WIZARD_LANGUAGES.map((l) =>
@@ -650,7 +632,7 @@ export function renderWizard(container, onComplete) {
               ` <span class="small text-err">${U.esc(r.error || 'Unreachable')}</span>`;
         } else if (id === 'embedding') {
           const ep = providerForRole(w, 'embedding');
-          if (!ep.apiKey && !isLoopbackBase(ep.apiBase)) {
+          if (!ep.apiKey && !U.isLoopbackBase(ep.apiBase)) {
             res.innerHTML = U.badge('Failed', 'err') +
               ' <span class="small text-err">No API key configured for this provider.</span>';
             return;
@@ -664,7 +646,7 @@ export function renderWizard(container, onComplete) {
               ` <span class="small text-err">${U.esc(re.error || 'Failed')}</span>`;
         } else {
           const rp = providerForRole(w, 'reranker');
-          if (!rp.apiKey && !isLoopbackBase(rp.apiBase)) {
+          if (!rp.apiKey && !U.isLoopbackBase(rp.apiBase)) {
             res.innerHTML = U.badge('Failed', 'err') +
               ' <span class="small text-err">No API key configured for this provider.</span>';
             return;

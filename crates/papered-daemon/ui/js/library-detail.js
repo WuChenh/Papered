@@ -1,11 +1,11 @@
 // Paper detail view (#/paper/:id) — sections, figures, metadata, translations.
 // ES module — routes self-register on import via app.js.
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
-import { navigate } from './router.js?v=2';
-import { renderMarkdown } from './markdown.js?v=2';
-import { wireCoverFallback, wireModalLinks, lastModal } from './library.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
+import { navigate, route } from './router.js?v=1';
+import { renderMarkdown } from './markdown.js?v=1';
+import { wireCoverFallback, wireModalLinks, lastModal } from './library.js?v=1';
 
 const POLL_MS = 3000;
 
@@ -138,8 +138,9 @@ function renderPaper(container, ctx) {
     });
     if (paper.retry_count > 0) rows += metaRow('Index retries', U.fmtInt(paper.retry_count));
     if (!rows) return '';
-    // Sibling spacing comes from `.card + .card`. Collapsed by default —
-    // metadata can be tall (affiliations, entities, links).
+    // Sibling spacing comes from `.back-link-wrap + .card` (it follows the
+    // header wrap, not a .card). Collapsed by default — metadata can be
+    // tall (affiliations, entities, links).
     return '<details class="card meta-details">' +
       '<summary class="card-head meta-summary"><h3>Metadata</h3>' +
       `<span class="meta-chevron">${U.icon('chevronRight', 14)}${U.icon('chevronDown', 14)}</span>` +
@@ -431,15 +432,7 @@ function renderPaper(container, ctx) {
   function populateTranslationPanel() {
     const sel = container.querySelector('#translation-lang-select');
     if (!sel) return;
-    const langs = [
-      { value: 'zh-CN', label: 'Chinese (Simplified)' },
-      { value: 'en', label: 'English' },
-      { value: 'fr', label: 'French' },
-      { value: 'de', label: 'German' },
-      { value: 'es', label: 'Spanish' },
-      { value: 'ru', label: 'Russian' }
-    ];
-    sel.innerHTML = langs.map((l) =>
+    sel.innerHTML = U.TRANSLATION_LANGUAGES.map((l) =>
       `<option value="${U.esc(l.value)}"${l.value === translationLang ? ' selected' : ''}>${U.esc(l.label)}</option>`
     ).join('');
     sel.onchange = () => {
@@ -854,6 +847,5 @@ function renderPaper(container, ctx) {
   };
 }
 
-import { route } from './router.js?v=2';
 route('/paper/:id', { title: 'Paper', render: renderPaper });
 route('/paper/:id/chunk/:chunkId', { title: 'Paper', render: renderPaper });

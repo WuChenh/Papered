@@ -69,7 +69,6 @@ export const API = {
   importPaper: (file) => API.upload('/api/v1/papers/import', file),
   pickFile: () => API.post('/api/v1/papers/pick-file'),
   batchAdd: (paths) => API.post('/api/v1/papers/batch', { file_paths: paths }),
-  batchStatus: (ids) => API.post('/api/v1/papers/batch-status', { ids }),
   batchDelete: (ids) => API.post('/api/v1/papers/batch-delete', { paper_ids: ids }),
   batchReindexSections: (ids) => API.post('/api/v1/papers/batch-reindex-sections', { paper_ids: ids }),
   reindex: (id) => API.post('/api/v1/papers/' + encodeURIComponent(id) + '/reindex'),
@@ -111,6 +110,7 @@ export const API = {
   stats: () => API.get('/api/v1/stats'),
   metrics: () => API.get('/api/v1/metrics'),
   importQueue: () => API.get('/api/v1/import-queue'),
+  setIndexingPaused: (paused) => API.post('/api/v1/index-queue/pause', { paused: !!paused }),
   health: () => API.get('/api/v1/health'),
   kbHealth: () => API.get('/api/v1/health/kb'),
   duplicates: () => API.get('/api/v1/health/duplicates'),
@@ -144,8 +144,6 @@ export const API = {
   testEndpoint: (body) => API.post('/api/v1/test-endpoint', body),
   testEmbedding: (body) => API.post('/api/v1/test-embedding', body),
   testReranker: (body) => API.post('/api/v1/test-reranker', body),
-  setEmbedding: (modelKey, reembedAll) =>
-    API.post('/api/v1/config/embedding', { model_key: modelKey, reembed_all: !!reembedAll }),
   resetData: (force, all) => API.post('/api/v1/reset-data', { force, all }),
 
   // ---- translations ----
@@ -155,8 +153,6 @@ export const API = {
     API.post('/api/v1/papers/' + encodeURIComponent(id) + '/translate/batch', body),
   getTranslations: (id, lang) =>
     API.get('/api/v1/papers/' + encodeURIComponent(id) + '/translations' + qs({ lang })),
-  searchTranslations: (q, limit) =>
-    API.get('/api/v1/translations/search' + qs({ q, limit: limit || 20 })),
   deleteTranslations: (id) =>
     API.del('/api/v1/papers/' + encodeURIComponent(id) + '/translations')
 };

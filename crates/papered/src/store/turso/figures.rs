@@ -101,10 +101,12 @@ impl TursoStore {
     pub(crate) async fn figures_with_missing_images(
         &self,
         data_dir: &std::path::Path,
-    ) -> Result<Vec<(String, String)>> {
-        let candidates: Vec<(String, String, String)> = self
+    ) -> Result<Vec<crate::store::vector::MissingFigureImage>> {
+        let candidates: Vec<(String, String, String, String)> = self
             .query_all(
-                "SELECT paper_id, id, image_path FROM figures WHERE image_path IS NOT NULL AND image_path != ''",
+                "SELECT f.paper_id, f.id, f.image_path, COALESCE(p.title, '') \
+                 FROM figures f LEFT JOIN papers p ON p.id = f.paper_id \
+                 WHERE f.image_path IS NOT NULL AND f.image_path != ''",
                 Vec::new(),
                 "missing images",
                 |row| {
@@ -112,6 +114,7 @@ impl TursoStore {
                         get_text(&row.get_value(0)?).unwrap_or_default(),
                         get_text(&row.get_value(1)?).unwrap_or_default(),
                         get_text(&row.get_value(2)?).unwrap_or_default(),
+                        get_text(&row.get_value(3)?).unwrap_or_default(),
                     ))
                 },
             )
@@ -119,7 +122,7 @@ impl TursoStore {
 
         let data_dir = data_dir.to_path_buf();
         let mut missing = Vec::new();
-        for (paper_id, id, path) in candidates {
+        for (paper_id, id, path, title) in candidates {
             let resolved = safe_join(&data_dir, &paper_id, &path).await;
             let is_missing = match resolved {
                 Ok(abs) => !tokio::fs::try_exists(&abs).await.unwrap_or(false),
@@ -129,7 +132,11 @@ impl TursoStore {
                 }
             };
             if is_missing {
-                missing.push((paper_id, id));
+                missing.push(crate::store::vector::MissingFigureImage {
+                    paper_id,
+                    figure_id: id,
+                    paper_title: title,
+                });
             }
         }
         Ok(missing)

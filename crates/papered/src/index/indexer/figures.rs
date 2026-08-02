@@ -41,163 +41,55 @@ impl super::Indexer {
         llm_figures: &[crate::paper::parser::LlmFigure],
         paper_data_dir: &Path,
     ) -> Result<()> {
-        use crate::paper::pdf_oxide;
-        use image::imageops::FilterType;
+        // Locating captions and rendering whole PDF pages is CPU-heavy — run
+        // the pass on the blocking pool so the async runtime stays responsive
+        // for HTTP requests.
+        let pdf_path_owned = pdf_path.to_path_buf();
+        let paper_id = paper.id.clone();
+        let figures_owned = llm_figures.to_vec();
+        let dir_owned = paper_data_dir.to_path_buf();
+        let located = tokio::task::spawn_blocking(move || {
+            catch_figure_render_panic(&paper_id, || {
+                locate_and_render_llm_figures(
+                    &pdf_path_owned,
+                    &paper_id,
+                    &figures_owned,
+                    &dir_owned,
+                )
+            })
+        })
+        .await
+        .map_err(|e| {
+            crate::PaperedError::Indexing(format!("Figure rendering task failed: {e}"))
+        })??;
 
-        const FIGURE_DPI: u32 = 200;
-        const MAX_LONG_SIDE: u32 = 2000;
-
-        let figures_dir = paper_data_dir.join("figures");
-        std::fs::create_dir_all(&figures_dir).map_err(|e| {
-            crate::PaperedError::io_other(format!(
-                "Failed to create figures dir {}: {e}",
-                figures_dir.display()
-            ))
-        })?;
-
-        // Open the PDF once — PageTextIndex and all page renders share this handle.
-        let pdf_doc = match pdf_oxide::PdfDocument::open(pdf_path) {
-            Ok(d) => Some(d),
-            Err(e) => {
-                tracing::warn!(
-                    paper_id = %paper.id,
-                    "Could not open PDF for figure extraction ({e}); images will be missing"
-                );
-                None
-            }
-        };
-        let page_index = pdf_doc
-            .as_ref()
-            .map(pdf_oxide::PageTextIndex::build_from_doc);
-        let mut located_count = 0u32;
-        let mut missing_count = 0u32;
-
-        let mut figures: Vec<crate::index::multimodal::FigureInfo> = Vec::new();
-        let mut used_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        for llm_fig in llm_figures {
-            let raw_label = sanitize_label(&llm_fig.label);
-            let fig_id = if raw_label.is_empty() {
-                // Label sanitized to empty — fall back to sequential index.
-                let mut n = figures.len() + 1;
-                loop {
-                    let candidate = format!("{}_fig{}", paper.id, n);
-                    if !used_ids.contains(&candidate) {
-                        break candidate;
-                    }
-                    n += 1;
-                }
-            } else {
-                let candidate = format!("{}_fig_{}", paper.id, raw_label);
-                if used_ids.contains(&candidate) {
-                    // Sanitized-label collision — append disambiguation suffix.
-                    let mut suffix = 2;
-                    loop {
-                        let alt = format!("{}_{}", candidate, suffix);
-                        if !used_ids.contains(&alt) {
-                            break alt;
-                        }
-                        suffix += 1;
-                    }
-                } else {
-                    candidate
-                }
-            };
-            used_ids.insert(fig_id.clone());
-
-            let render_page = page_index.as_ref().and_then(|pi| {
-                pi.locate_figure(&llm_fig.caption, &llm_fig.label)
-                    .map(|p| pi.resolve_figure_page(p))
-            });
-            if render_page.is_some() {
-                located_count += 1;
-            } else if page_index.is_some() {
-                missing_count += 1;
-            }
-
-            let img_path = if let (Some(page), Some(doc)) = (render_page, pdf_doc.as_ref()) {
-                match pdf_oxide::render_page_to_image_from_doc(doc, page, FIGURE_DPI) {
-                    Ok(img) => {
-                        let resized = if img.width() > MAX_LONG_SIDE || img.height() > MAX_LONG_SIDE
-                        {
-                            let (w, h) = (img.width(), img.height());
-                            let (new_w, new_h) = if w > h {
-                                (MAX_LONG_SIDE, (h * MAX_LONG_SIDE / w).max(1))
-                            } else {
-                                ((w * MAX_LONG_SIDE / h).max(1), MAX_LONG_SIDE)
-                            };
-                            img.resize_exact(new_w, new_h, FilterType::Lanczos3)
-                        } else {
-                            img
-                        };
-                        let rel_path = format!("figures/{fig_id}.jpg");
-                        let dest = paper_data_dir.join(&rel_path);
-                        match resized.to_rgb8().save(&dest) {
-                            Ok(()) => {
-                                tracing::debug!(
-                                    fig_id = %fig_id,
-                                    "Rendered figure page to {}",
-                                    dest.display()
-                                );
-                                Some(rel_path)
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to save figure image {}: {}",
-                                    dest.display(),
-                                    e
-                                );
-                                None
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to render page for figure {}: {}", fig_id, e);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            figures.push(crate::index::multimodal::FigureInfo {
-                id: fig_id,
-                paper_id: paper.id.clone(),
-                caption: Some(llm_fig.caption.clone()),
-                description: None,
-                image_path: img_path,
-                // 1-based page the stored image was rendered from.
-                page_number: render_page.map(|p| p as u32 + 1),
-                bbox: None,
-                figure_label: Some(llm_fig.label.clone()),
-            });
-        }
-
-        if page_index.is_none() {
+        if !located.page_index_available {
             tracing::warn!(
                 paper_id = %paper.id,
                 "PageTextIndex::build_from_doc unavailable — pdf_oxide could not open PDF for caption matching. Figure images will be missing."
             );
-        } else if missing_count > 0 {
+        } else if located.missing > 0 {
             tracing::warn!(
                 paper_id = %paper.id,
-                located = located_count,
-                missing = missing_count,
-                "Could not locate {missing_count} of {} figure captions in PDF pages; those figures will have no images.",
-                located_count + missing_count
+                located = located.located,
+                missing = located.missing,
+                "Could not locate {} of {} figure captions in PDF pages; those figures will have no images.",
+                located.missing,
+                located.located + located.missing
             );
         } else {
             tracing::info!(
                 paper_id = %paper.id,
-                count = located_count,
+                count = located.located,
                 "Located all {} figure captions in PDF pages",
-                located_count
+                located.located
             );
         }
 
         // LLM figures: text-only caption embedding (full-page renders are
         // dominated by surrounding text — no value in multimodal embed).
         // No separate LLM description — the extracted caption is already clean.
+        let mut figures = located.figures;
         self.embed_describe_and_store(
             &paper.id,
             false, // skip LLM description
@@ -381,6 +273,178 @@ impl super::Indexer {
     }
 }
 
+/// Result of the synchronous locate-and-render pass over LLM figures.
+struct LocatedFigures {
+    figures: Vec<crate::index::multimodal::FigureInfo>,
+    located: u32,
+    missing: u32,
+    /// false when the PDF could not be opened, so no page index exists.
+    page_index_available: bool,
+}
+
+/// Run a fallible figure-rendering pass, converting a panic (e.g. pdf_oxide
+/// crashing on a malformed page) into a degraded empty result. Figure
+/// extraction must never fail the whole paper — the paper falls back to
+/// text-only indexing instead. Ordinary `Err`s pass through unchanged.
+fn catch_figure_render_panic(
+    paper_id: &str,
+    f: impl FnOnce() -> Result<LocatedFigures>,
+) -> Result<LocatedFigures> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|payload| {
+        let msg = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+            .unwrap_or("unknown panic");
+        tracing::warn!(
+            paper_id = %paper_id,
+            "pdf_oxide panicked during figure rendering: {msg}; figure images will be missing"
+        );
+        Ok(LocatedFigures {
+            figures: Vec::new(),
+            located: 0,
+            missing: 0,
+            // The panic warn above already explains why figures are missing —
+            // keep the "could not open PDF" branch in `index_llm_figures` quiet.
+            page_index_available: true,
+        })
+    })
+}
+
+/// CPU-heavy figure pass: open the PDF, build the page-text index, locate each
+/// caption, render and save figure images. Runs on the blocking pool (via the
+/// caller's `spawn_blocking`) so the async runtime stays responsive.
+fn locate_and_render_llm_figures(
+    pdf_path: &Path,
+    paper_id: &str,
+    llm_figures: &[crate::paper::parser::LlmFigure],
+    paper_data_dir: &Path,
+) -> Result<LocatedFigures> {
+    use crate::paper::pdf_oxide;
+    use crate::util::image::MAX_IMAGE_LONG_SIDE;
+
+    const FIGURE_DPI: u32 = 200;
+
+    let figures_dir = paper_data_dir.join("figures");
+    std::fs::create_dir_all(&figures_dir).map_err(|e| {
+        crate::PaperedError::io_other(format!(
+            "Failed to create figures dir {}: {e}",
+            figures_dir.display()
+        ))
+    })?;
+
+    // Open the PDF once — PageTextIndex and all page renders share this handle.
+    let pdf_doc = match pdf_oxide::PdfDocument::open(pdf_path) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            tracing::warn!(
+                paper_id = %paper_id,
+                "Could not open PDF for figure extraction ({e}); images will be missing"
+            );
+            None
+        }
+    };
+    let page_index = pdf_doc
+        .as_ref()
+        .map(pdf_oxide::PageTextIndex::build_from_doc);
+    let mut located = 0u32;
+    let mut missing = 0u32;
+
+    let mut figures: Vec<crate::index::multimodal::FigureInfo> = Vec::new();
+    let mut used_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for llm_fig in llm_figures {
+        let raw_label = sanitize_label(&llm_fig.label);
+        let fig_id = if raw_label.is_empty() {
+            // Label sanitized to empty — fall back to sequential index.
+            let mut n = figures.len() + 1;
+            loop {
+                let candidate = format!("{paper_id}_fig{n}");
+                if !used_ids.contains(&candidate) {
+                    break candidate;
+                }
+                n += 1;
+            }
+        } else {
+            let candidate = format!("{paper_id}_fig_{raw_label}");
+            if used_ids.contains(&candidate) {
+                // Sanitized-label collision — append disambiguation suffix.
+                let mut suffix = 2;
+                loop {
+                    let alt = format!("{candidate}_{suffix}");
+                    if !used_ids.contains(&alt) {
+                        break alt;
+                    }
+                    suffix += 1;
+                }
+            } else {
+                candidate
+            }
+        };
+        used_ids.insert(fig_id.clone());
+
+        let render_page = page_index.as_ref().and_then(|pi| {
+            pi.locate_figure(&llm_fig.caption, &llm_fig.label)
+                .map(|p| pi.resolve_figure_page(p))
+        });
+        if render_page.is_some() {
+            located += 1;
+        } else if page_index.is_some() {
+            missing += 1;
+        }
+
+        let img_path = if let (Some(page), Some(doc)) = (render_page, pdf_doc.as_ref()) {
+            match pdf_oxide::render_page_to_image_from_doc(doc, page, FIGURE_DPI) {
+                Ok(img) => {
+                    let resized =
+                        crate::util::image::resize_to_longest_side(&img, MAX_IMAGE_LONG_SIDE);
+                    let rel_path = format!("figures/{fig_id}.jpg");
+                    let dest = paper_data_dir.join(&rel_path);
+                    match resized.to_rgb8().save(&dest) {
+                        Ok(()) => {
+                            tracing::debug!(
+                                fig_id = %fig_id,
+                                "Rendered figure page to {}",
+                                dest.display()
+                            );
+                            Some(rel_path)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to save figure image {}: {}", dest.display(), e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to render page for figure {}: {}", fig_id, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        figures.push(crate::index::multimodal::FigureInfo {
+            id: fig_id,
+            paper_id: paper_id.to_string(),
+            caption: Some(llm_fig.caption.clone()),
+            description: None,
+            image_path: img_path,
+            // 1-based page the stored image was rendered from.
+            page_number: render_page.map(|p| p as u32 + 1),
+            bbox: None,
+            figure_label: Some(llm_fig.label.clone()),
+        });
+    }
+
+    Ok(LocatedFigures {
+        figures,
+        located,
+        missing,
+        page_index_available: page_index.is_some(),
+    })
+}
+
 fn build_description_prompt_body(figures: &[crate::index::multimodal::FigureInfo]) -> String {
     let mut prompt =
         String::from("Describe each figure from this research paper in 1-2 sentences. ");
@@ -460,5 +524,30 @@ mod tests {
         assert_eq!(sanitize_label("!!!"), "");
         // Hyphens and alphanumerics pass through.
         assert_eq!(sanitize_label("S1-fig"), "S1-fig");
+    }
+
+    #[test]
+    fn render_panic_degrades_to_empty_figures() {
+        // A panic inside the render pass (e.g. pdf_oxide on a malformed page)
+        // must be contained: the paper keeps indexing as text-only instead of
+        // failing the whole ingest.
+        let located = catch_figure_render_panic("test-paper", || panic!("boom"))
+            .expect("a render panic must degrade, not propagate as Err");
+        assert!(located.figures.is_empty());
+        assert_eq!(located.located, 0);
+        assert_eq!(located.missing, 0);
+    }
+
+    #[test]
+    fn render_errors_still_pass_through() {
+        // Only panics degrade; ordinary errors from the pass still surface so
+        // genuine failures are not silently swallowed.
+        let result = catch_figure_render_panic("test-paper", || {
+            Err(crate::PaperedError::io_other("figure pass failed"))
+        });
+        let err = result.err().unwrap_or_else(|| {
+            panic!("an ordinary Err must not be degraded");
+        });
+        assert!(err.to_string().contains("figure pass failed"));
     }
 }

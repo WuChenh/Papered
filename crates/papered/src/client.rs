@@ -151,14 +151,50 @@ pub fn is_loopback_host(host: &str) -> bool {
     matches!(h, "localhost" | "127.0.0.1" | "::1")
 }
 
-/// Maximum attempts (1 initial + 2 retries) for transient HTTP failures.
-const HTTP_MAX_ATTEMPTS: u32 = 3;
+/// Maximum attempts (1 initial + 5 retries) for transient HTTP failures.
+const HTTP_MAX_ATTEMPTS: u32 = 6;
+
+/// Base backoff (before jitter) for the retry following `attempt` (1-based):
+/// 1s after the first failure, doubling per retry, capped at 30s.
+const BACKOFF_BASE_MS: u64 = 1_000;
+const BACKOFF_CAP_MS: u64 = 30_000;
 
 /// Exponential backoff before the retry following `attempt` (1-based):
-/// 500ms after the first failure, 1s after the second, capped at 2s.
+/// 1s after the first failure, doubling each retry and capped at 30s. Jitter
+/// (50–100% of the nominal delay) spreads concurrent retries, so a burst of
+/// papers indexing together does not re-collide on a flaky remote API.
 pub(crate) fn retry_backoff(attempt: u32) -> Duration {
-    let ms = 500 * (1u64 << (attempt - 1).min(2));
-    Duration::from_millis(ms)
+    #[cfg(test)]
+    {
+        if let Some(delay) = TEST_RETRY_BACKOFF.with(|c| c.get()) {
+            return delay;
+        }
+    }
+    let nominal_ms = BACKOFF_BASE_MS
+        .saturating_mul(1u64 << (attempt - 1).min(15))
+        .min(BACKOFF_CAP_MS);
+    let jittered_ms = nominal_ms as f64 * jitter_factor();
+    Duration::from_millis(jittered_ms.round() as u64)
+}
+
+/// Jitter factor in [0.5, 1.0). Seeded from the process RNG via
+/// `RandomState`, so concurrent retries spread without collapsing the
+/// backoff floor.
+fn jitter_factor() -> f64 {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u8(0);
+    // High 53 bits → uniform [0, 1), scaled into [0.5, 1.0).
+    0.5 + (((hasher.finish() >> 11) as f64) / ((1u64 << 53) as f64)) * 0.5
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only override: when set, `retry_backoff` returns this delay
+    /// unchanged, keeping retry-loop tests fast.
+    static TEST_RETRY_BACKOFF: std::cell::Cell<Option<Duration>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// Extract a `Retry-After` delay (delta-seconds form) from a response.
@@ -232,8 +268,8 @@ async fn send_retry_core<B: serde::Serialize + ?Sized>(
 ///
 /// Accepts any method (GET, POST, ...) and an optional request body. Retries
 /// 5xx, 429, and transport errors up to [`HTTP_MAX_ATTEMPTS`] times with
-/// exponential backoff, honouring `Retry-After` when present. 4xx errors
-/// (other than 429) fail immediately.
+/// exponential backoff and jitter, honouring `Retry-After` when present. 4xx
+/// errors (other than 429) fail immediately.
 pub(crate) async fn send_with_retry<
     B: serde::Serialize + ?Sized,
     T: serde::de::DeserializeOwned,
@@ -324,8 +360,8 @@ mod tests {
 
     /// Spawn a single-threaded mock HTTP server that answers each request
     /// with the next status in `statuses` (the last entry repeats).
-    /// 429 responses carry `Retry-After: 0` so tests stay fast.
-    /// Returns the server URL and a shared request counter.
+    /// Retryable statuses (429 and 5xx) carry `Retry-After: 0` so retry-loop
+    /// tests stay fast. Returns the server URL and a shared request counter.
     fn spawn_status_server(statuses: Vec<u16>) -> (String, Arc<AtomicUsize>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -343,7 +379,7 @@ mod tests {
                     429 => ("Too Many Requests", "rate limited"),
                     _ => ("Internal Server Error", "server error"),
                 };
-                let retry_after = if status == 429 {
+                let retry_after = if status == 429 || status >= 500 {
                     "Retry-After: 0\r\n"
                 } else {
                     ""
@@ -382,7 +418,10 @@ mod tests {
     async fn post_json_gives_up_after_max_attempts() {
         let (url, count) = spawn_status_server(vec![500]);
         let err = post(&url).await.expect_err("should fail after retries");
-        assert_eq!(count.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            super::HTTP_MAX_ATTEMPTS as usize
+        );
         assert!(err.to_string().contains("500"), "unexpected error: {err}");
     }
 
@@ -417,10 +456,33 @@ mod tests {
             .local_addr()
             .unwrap();
         let url = format!("http://{addr}/");
+        // Collapse the backoff so exhausting all attempts stays fast.
+        TEST_RETRY_BACKOFF.with(|c| c.set(Some(Duration::from_millis(1))));
         let err = post(&url).await.expect_err("connection refused must fail");
         assert!(
             matches!(err, crate::PaperedError::Http(_)),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn retry_backoff_grows_exponentially_with_jitter() {
+        // Each delay stays within 50–100% of the nominal 1s→2s→4s→8s→16s
+        // schedule, and the cap holds for far-future attempts.
+        let nominal_ms = [1_000u64, 2_000, 4_000, 8_000, 16_000];
+        for (attempt, &nominal) in nominal_ms.iter().enumerate() {
+            let delay = retry_backoff(attempt as u32 + 1);
+            let ms = delay.as_millis() as u64;
+            assert!(
+                ms >= nominal / 2 && ms <= nominal,
+                "attempt {}: {delay:?} outside jitter window for {nominal}ms",
+                attempt + 1
+            );
+        }
+        let capped = retry_backoff(30);
+        assert!(
+            capped.as_millis() >= 15_000 && capped.as_millis() <= 30_000,
+            "cap violated: {capped:?}"
         );
     }
 }

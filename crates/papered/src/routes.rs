@@ -69,6 +69,7 @@ pub const API_ASK: &str = "/api/v1/ask";
 pub const API_PROMPTS: &str = "/api/v1/prompts";
 pub const API_EXPORT: &str = "/api/v1/export";
 pub const API_IMPORT_QUEUE: &str = "/api/v1/import-queue";
+pub const API_INDEX_QUEUE_PAUSE: &str = "/api/v1/index-queue/pause";
 pub const API_LATTICE_STATUS: &str = "/api/v1/lattice/status";
 pub const API_LATTICE_COLLECTIONS: &str = "/api/v1/lattice/collections";
 pub const API_LATTICE_SEARCH: &str = "/api/v1/lattice/search";

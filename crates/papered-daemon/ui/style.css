@@ -224,16 +224,14 @@ code, pre { font-family: var(--font-mono); font-size: 0.86em; }
 
 .hidden { display: none !important; }
 .muted { color: var(--text-3); }
-.text-2 { color: var(--text-2); }
 .text-err { color: var(--err); }
 .text-warn { color: var(--warn); }
 .text-ok { color: var(--ok); }
-.text-accent, .icon-accent { color: var(--accent-text); }
+.text-accent { color: var(--accent-text); }
 .small { font-size: 12.5px; }
 .mono { font-family: var(--font-mono); font-size: 0.85em; }
 .nowrap { white-space: nowrap; }
 .center { text-align: center; }
-.right { text-align: right; }
 .flex-1 { flex: 1; min-width: 0; }
 .min-w-0 { min-width: 0; }
 .wrap-anywhere { overflow-wrap: anywhere; }
@@ -243,7 +241,6 @@ code, pre { font-family: var(--font-mono); font-size: 0.86em; }
 .row-sm { display: flex; align-items: center; gap: 6px; }
 .row-top { display: flex; align-items: flex-start; gap: 18px; }
 .row-nowrap { flex-wrap: nowrap; }
-.wrap { flex-wrap: wrap; }
 .spacer { flex: 1; }
 
 .mt-0 { margin-top: 0; }
@@ -251,14 +248,12 @@ code, pre { font-family: var(--font-mono); font-size: 0.86em; }
 .mt-2 { margin-top: 10px; }
 .mt-3 { margin-top: 12px; }
 .mt-4 { margin-top: 16px; }
-.mt-5 { margin-top: 24px; }
 .mt-6 { margin-top: 32px; }
 .mb-0 { margin-bottom: 0; }
 .mb-1 { margin-bottom: 6px; }
 .mb-2 { margin-bottom: 10px; }
 .mb-3 { margin-bottom: 12px; }
 .mb-4 { margin-bottom: 16px; }
-.mb-5 { margin-bottom: 24px; }
 .pad-block { padding: 12px 0; }
 
 /* Higher specificity than `.select` (width:100%) so toolbar selects size to
@@ -267,6 +262,21 @@ code, pre { font-family: var(--font-mono); font-size: 0.86em; }
 .input-md { max-width: 220px; }
 .select-md { max-width: 240px; }
 .scroll-box { max-height: 160px; overflow: auto; }
+/* Taller scroll region for index queue / integrity / quality listings, so
+   long result sets don't stretch the page vertically. */
+.scroll-box-lg { max-height: 340px; overflow-y: auto; }
+/* Scrollable table variant with a sticky header (data-quality issues). */
+.table-scroll { max-height: 480px; overflow-y: auto; }
+.table-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+/* Clickable stat card (integrity tab jump links) — button reset + affordance. */
+button.stat-card { font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; }
+button.stat-card:disabled { cursor: default; }
+button.stat-card:not(:disabled):hover { border-color: var(--accent, #0a84ff); }
 .section { margin-top: 24px; }
 .flex-label { flex: 1; min-width: 200px; }
 
@@ -347,18 +357,6 @@ code, pre { font-family: var(--font-mono); font-size: 0.86em; }
   font-weight: 600;
 }
 .nav-item svg { flex: none; opacity: 0.9; }
-.nav-item .nav-count {
-  margin-left: auto;
-  font-size: 11px;
-  background: var(--surface-3);
-  border-radius: 999px;
-  padding: 1px 7px;
-  color: var(--text-2);
-}
-.nav-item.active .nav-count, .nav-item[aria-current="page"] .nav-count {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
 
 .sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; }
 
@@ -398,7 +396,6 @@ code, pre { font-family: var(--font-mono); font-size: 0.86em; }
 }
 .content.wide { max-width: 1400px; }
 
-#app > * + * { margin-top: 32px; }
 #health-body > * + *,
 #tab-body > * + * { margin-top: 32px; }
 
@@ -434,7 +431,6 @@ code, pre { font-family: var(--font-mono); font-size: 0.86em; }
 .btn.subtle { background: transparent; border-color: transparent; color: var(--accent-text); padding: 6px 10px; }
 .btn.subtle:hover { background: var(--accent-soft); }
 .btn.sm { min-height: 26px; padding: 4px 12px; font-size: 12.5px; }
-.btn.block { width: 100%; }
 
 .icon-btn {
   display: inline-grid;
@@ -461,6 +457,9 @@ code, pre { font-family: var(--font-mono); font-size: 0.86em; }
   min-width: 0;
 }
 .card + .card { margin-top: 32px; }
+/* Detail page: the header card is wrapped in .back-link-wrap, so the first
+   following card has no .card sibling to trigger the rule above. */
+.back-link-wrap + .card { margin-top: 32px; }
 /* Inside grids, spacing comes from the grid gap — the sibling rule above
    would push every card after the first down and break row alignment. */
 .grid > .card { margin-top: 0; }
@@ -478,9 +477,8 @@ code, pre { font-family: var(--font-mono); font-size: 0.86em; }
 .grid { display: grid; gap: 28px; }
 .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-@media (max-width: 1000px) { .grid.cols-3, .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr; } }
 
 /* ---- stat tiles ---- */
 
@@ -1008,7 +1006,6 @@ input[type="range"] { accent-color: var(--accent); }
 .table td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .table tr:last-child td { border-bottom: none; }
 .table tbody tr:hover { background: var(--surface-2); }
-.table tbody tr.clickable { cursor: pointer; }
 .table tr.selected { background: var(--accent-soft); }
 
 /* ---- paper rows / list ---- */
@@ -1186,14 +1183,6 @@ input[type="range"] { accent-color: var(--accent); }
 .empty-state h3 { font-size: 15px; margin-bottom: 6px; color: var(--text); }
 .empty-state p { font-size: 13px; max-width: 420px; margin: 0 auto 14px; }
 .empty-state p.wide { max-width: 520px; }
-
-.skeleton {
-  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s infinite;
-  border-radius: var(--radius-sm);
-}
-@keyframes shimmer { to { background-position: -200% 0; } }
 
 /* ---- toasts (Liquid Glass) ---- */
 
@@ -1681,7 +1670,19 @@ details.advanced summary:hover { color: var(--text); }
   font-size: 13px;
 }
 .queue-item:last-child { border-bottom: none; }
-.queue-item .file-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.queue-item .queue-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.queue-item .queue-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-item .queue-error { font-size: 12px; color: var(--err); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Whole-row queue links to the paper detail page: keep the row look, drop the
+   default anchor underline/color, show hover + keyboard-focus feedback. */
+.queue-item-link { color: inherit; text-decoration: none; cursor: pointer; }
+.queue-item-link:hover, .queue-item-link:focus-visible {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+/* Topbar "Indexing paused" badge is a link — no underline on hover. */
+.topbar-badge { text-decoration: none; }
+.topbar-badge:hover { text-decoration: none; }
 
 .snippet {
   font-size: 13px;

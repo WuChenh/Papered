@@ -1,26 +1,15 @@
 // Settings editor: faithful draft editor for providers / models / purposes,
 // plus data management (paths, reset). Registers the /settings route.
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
-import { route, setLeaveGuard, clearLeaveGuard } from './router.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
+import { route, setLeaveGuard, clearLeaveGuard } from './router.js?v=1';
 
 // ---- helpers -----------------------------------------------------------
 
 const deepClone = (o) => JSON.parse(JSON.stringify(o));
 
 // True when an API base URL points at the local machine (no key needed).
-function isLoopbackBase(apiBase) {
-  let host = String(apiBase || '').trim().toLowerCase()
-    .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
-    .split('/')[0];
-  if (host.charAt(0) === '[') {
-    host = host.slice(1, host.indexOf(']'));
-  } else if (host.indexOf(':') === host.lastIndexOf(':')) {
-    host = host.split(':')[0];
-  }
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
-}
 
 const KEY_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -81,7 +70,8 @@ route('/settings', {
       return JSON.stringify(st.draft.providers) !== JSON.stringify(st.snapshot.providers) ||
         JSON.stringify(st.draft.models) !== JSON.stringify(st.snapshot.models) ||
         JSON.stringify(st.draft.purposes) !== JSON.stringify(st.snapshot.purposes) ||
-        JSON.stringify(st.draft.translation) !== JSON.stringify(st.snapshot.translation);
+        JSON.stringify(st.draft.translation) !== JSON.stringify(st.snapshot.translation) ||
+        JSON.stringify(st.draft.indexing) !== JSON.stringify(st.snapshot.indexing);
     }
 
     function guard() {
@@ -122,12 +112,14 @@ route('/settings', {
           <button type="button" class="chip" data-scroll="sec-models">Models</button>
           <button type="button" class="chip" data-scroll="sec-purposes">Purposes</button>
           <button type="button" class="chip" data-scroll="sec-translation">Translation</button>
+          <button type="button" class="chip" data-scroll="sec-indexing">Indexing</button>
           <button type="button" class="chip" data-scroll="sec-data">Data</button>
         </div>
         ${providersSectionHtml()}
         ${modelsSectionHtml()}
         ${purposesSectionHtml()}
         ${translationSectionHtml()}
+        ${indexingSectionHtml()}
         ${dataSectionHtml()}
         <div class="save-bar${isDirty() ? '' : ' hidden'}" id="save-bar">
           <span class="small muted">Unsaved changes</span>
@@ -140,6 +132,7 @@ route('/settings', {
       wireModelsSection();
       wirePurposesSection();
       wireTranslationSection();
+      wireIndexingSection();
       wireDataSection();
       container.querySelector('#settings-revert').addEventListener('click', () => {
         st.draft = deepClone(st.snapshot);
@@ -491,7 +484,7 @@ route('/settings', {
           const res = container.querySelector(`[data-test-result="${k}"]`);
           const m = st.draft.models[k];
           const prov = providerResolution(m.provider);
-          if (!prov.apiKey && !isLoopbackBase(prov.apiBase)) {
+          if (!prov.apiKey && !U.isLoopbackBase(prov.apiBase)) {
             res.innerHTML = '<span class="field-error">No API key configured for this provider.</span>';
             return;
           }
@@ -590,14 +583,7 @@ route('/settings', {
 
     // ---- translation section ----
 
-    const LANGUAGE_OPTIONS = [
-      { value: 'zh-CN', label: 'Chinese (Simplified)' },
-      { value: 'en', label: 'English' },
-      { value: 'fr', label: 'French' },
-      { value: 'de', label: 'German' },
-      { value: 'es', label: 'Spanish' },
-      { value: 'ru', label: 'Russian' }
-    ];
+    const LANGUAGE_OPTIONS = U.TRANSLATION_LANGUAGES;
 
     function translationSectionHtml() {
       const t = st.draft.translation || {};
@@ -647,6 +633,36 @@ route('/settings', {
           updateSaveBar();
         });
       }
+    }
+
+    // ---- indexing section ----
+
+    function indexingSectionHtml() {
+      const idx = st.draft.indexing || {};
+      const conc = idx.concurrency == null ? 3 : idx.concurrency;
+      return `
+        <section class="section" id="sec-indexing">
+          <h3>Indexing</h3>
+          <div class="field">
+            <label class="label" for="indexing-concurrency">Concurrent indexing jobs</label>
+            <input class="input input-md" type="number" min="1" max="16" id="indexing-concurrency"
+              value="${U.esc(conc)}">
+            <div class="field-hint">Each job holds a heavy per-paper working set (parsed PDF, chunks, page
+              renders), so high values raise memory use sharply — the default is 3. Requires a daemon
+              restart to take effect.</div>
+          </div>
+        </section>`;
+    }
+
+    function wireIndexingSection() {
+      const inp = container.querySelector('#indexing-concurrency');
+      if (!inp) return;
+      inp.addEventListener('change', () => {
+        const idx = (st.draft.indexing = st.draft.indexing || {});
+        idx.concurrency = Math.min(16, Math.max(1, Math.round(Number(inp.value) || 3)));
+        inp.value = String(idx.concurrency);
+        updateSaveBar();
+      });
     }
 
     // ---- data section ----
@@ -863,6 +879,14 @@ route('/settings', {
         st.renames = { providers: {}, models: {} };
         paint();
         U.toast('Settings saved', 'success');
+        // Indexing knobs (concurrency / queue_size) only apply after a daemon
+        // restart; the server flags this on the next health response.
+        API.health().then((h) => {
+          if (st.destroyed) return;
+          if (h && h.config_needs_restart) {
+            U.toast('Settings saved — restart the daemon for indexing changes to take effect', 'info');
+          }
+        }).catch(() => {});
       } catch (e) {
         if (st.destroyed) return;
         if (btn) { btn.disabled = false; btn.textContent = 'Save'; }

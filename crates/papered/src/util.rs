@@ -160,6 +160,20 @@ pub struct IndexJob {
     pub reembed_only: bool,
 }
 
+impl IndexJob {
+    /// Fresh job: no retries, no section-only or re-embed flags.
+    pub fn new(paper_id: String, file_path: String) -> Self {
+        Self {
+            paper_id,
+            file_path,
+            is_reindex: false,
+            retry_count: 0,
+            sections_only: false,
+            reembed_only: false,
+        }
+    }
+}
+
 /// Estimate token count from text with language awareness.
 ///
 /// Uses a hybrid heuristic:

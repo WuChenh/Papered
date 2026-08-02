@@ -83,6 +83,43 @@ fn choose_auto_format(img: &image::DynamicImage) -> image::ImageFormat {
     }
 }
 
+/// Read width/height from a PNG file header (IHDR chunk).
+/// PNG layout: 8-byte signature, then 4-byte length, 4-byte "IHDR",
+/// then 4-byte width, 4-byte height (all big-endian).
+pub fn png_dimensions(path: &Path) -> Option<(u32, u32)> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = [0u8; 24];
+    file.read_exact(&mut buf).ok()?;
+    let w = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+    let h = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
+    Some((w, h))
+}
+
+/// Shared long-side cap (px) for stored page images: covers and extracted
+/// figures are both capped at 2000 px on the long side.
+pub const MAX_IMAGE_LONG_SIDE: u32 = 2000;
+
+/// Resize an image so its longest side is at most `max_long_side`, preserving
+/// aspect ratio with Lanczos3 filtering. Returns the image unchanged when it
+/// already fits. Shared by cover generation, figure rendering, and image
+/// optimization.
+pub fn resize_to_longest_side(
+    img: &image::DynamicImage,
+    max_long_side: u32,
+) -> image::DynamicImage {
+    let (w, h) = (img.width(), img.height());
+    if w <= max_long_side && h <= max_long_side {
+        return img.clone();
+    }
+    let (new_w, new_h) = if w > h {
+        (max_long_side, (h * max_long_side / w).max(1))
+    } else {
+        ((w * max_long_side / h).max(1), max_long_side)
+    };
+    img.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3)
+}
+
 /// Resize and re-encode an image to reduce storage size.
 ///
 /// - Decodes the source image.
@@ -121,14 +158,7 @@ pub fn optimize_image(
         OptimizedImageFormat::Png => image::ImageFormat::Png,
     };
 
-    let (w, h) = (img.width(), img.height());
-    let long = w.max(h);
-    if long > max_long_side {
-        let ratio = max_long_side as f32 / long as f32;
-        let new_w = (w as f32 * ratio).max(1.0) as u32;
-        let new_h = (h as f32 * ratio).max(1.0) as u32;
-        img = img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3);
-    }
+    img = resize_to_longest_side(&img, max_long_side);
 
     // Ensure color type is compatible with the target format.
     let img = match actual_format {

@@ -81,7 +81,7 @@ The daemon exposes a JSON REST API on `http://127.0.0.1:9321` by default. If tha
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Liveness check |
-| `GET` | `/api/v1/health` | Full health (paper count, vector count, embedding info) |
+| `GET` | `/api/v1/health` | Full health (paper count, vector count, embedding info, indexing paused state) |
 | `GET` | `/api/v1/health/kb` | KB integrity health |
 | `POST` | `/api/v1/health/cleanup` | Clean up orphaned data |
 | `POST` | `/api/v1/health/optimize` | Optimize Turso FTS indices + clear caches |
@@ -144,7 +144,8 @@ The daemon exposes a JSON REST API on `http://127.0.0.1:9321` by default. If tha
 | `DELETE` | `/api/v1/prompts/{id}` | Delete prompt |
 | `POST` | `/api/v1/prompts/{id}/default` | Set default prompt |
 | `POST` | `/api/v1/export` | Export data (json/csv/markdown/sqlite) |
-| `GET` | `/api/v1/import-queue` | Get import queue status |
+| `GET` | `/api/v1/import-queue` | Get import queue status (`{paused, items[{paper_id, file_path, status, title?, error_message?}]}`) |
+| `POST` | `/api/v1/index-queue/pause` | Pause/resume indexing (`{"paused": bool}`; persisted across restarts) |
 | `GET` | `/api/v1/lattice/status` | Lattice sync status |
 | `GET` | `/api/v1/lattice/collections` | List available Lattice collections |
 | `PUT` | `/api/v1/lattice/sync-collections` | Set which Lattice collections to sync |

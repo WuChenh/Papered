@@ -31,8 +31,8 @@ pub fn api_router() -> Router<Arc<AppState>> {
         add_comment, delete_comment, delete_rating, get_rating, list_comments, set_rating,
     };
     use self::config::{
-        get_config, import_queue, reset_data, setup_status, test_embedding, test_endpoint,
-        test_reranker, update_config, update_embedding_config,
+        get_config, import_queue, reset_data, set_indexing_paused, setup_status, test_embedding,
+        test_endpoint, test_reranker, update_config, update_embedding_config,
     };
     use self::export::export_data;
     use self::health::{
@@ -119,6 +119,7 @@ pub fn api_router() -> Router<Arc<AppState>> {
         .route(API_STATS, get(stats))
         .route(API_METRICS, get(metrics))
         .route(API_IMPORT_QUEUE, get(import_queue))
+        .route(API_INDEX_QUEUE_PAUSE, post(set_indexing_paused))
         .route(API_LATTICE_STATUS, get(lattice_status))
         .route(API_LATTICE_COLLECTIONS, get(lattice_collections))
         .route(API_LATTICE_SEARCH, get(lattice_search))

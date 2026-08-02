@@ -107,7 +107,7 @@ impl TursoStore {
         if safe_query.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let sql = "SELECT t.id, t.paper_id, t.content_type, t.content_ref, t.source_hash, \
              t.target_language, t.translated_text, t.model, t.created_at, t.updated_at \
              FROM translations t \

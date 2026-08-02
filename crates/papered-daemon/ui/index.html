@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Papered</title>
-  <script src="boot.js?v=2"></script>
-  <link rel="stylesheet" href="style.css?v=2">
-  <link rel="stylesheet" href="js/vendor/katex.min.css?v=2">
+  <script src="boot.js?v=1"></script>
+  <link rel="stylesheet" href="style.css?v=1">
+  <link rel="stylesheet" href="js/vendor/katex.min.css?v=1">
 </head>
 <body>
   <a class="skip-link" href="#app">Skip to content</a>
@@ -36,6 +36,8 @@
         <button id="sidebar-toggle" class="icon-btn sidebar-toggle" type="button" aria-label="Menu" aria-expanded="false" aria-controls="sidebar">☰</button>
         <span class="topbar-title" id="topbar-title">Dashboard</span>
         <span class="topbar-spacer"></span>
+        <a class="badge warn topbar-badge hidden" id="indexing-paused-badge" href="#/"
+          title="Indexing is paused — open the dashboard to resume">Indexing paused</a>
         <button id="appearance-btn" class="icon-btn bordered" type="button" aria-label="Appearance" aria-haspopup="dialog" aria-expanded="false" aria-controls="appearance-popover" title="Appearance">Aa</button>
       </header>
       <div id="appearance-popover" class="popover hidden" role="dialog" aria-label="Appearance">
@@ -59,6 +61,6 @@
     </div>
   </div>
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="js/app.js?v=2"></script>
+  <script type="module" src="js/app.js?v=1"></script>
 </body>
 </html>

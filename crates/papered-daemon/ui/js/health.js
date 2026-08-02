@@ -1,9 +1,9 @@
 // Health view: index health overview, data quality, duplicates, integrity,
 // image quality, and maintenance actions. Registers route('/health').
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
-import { route } from './router.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
+import { route } from './router.js?v=1';
 
 // ---- tab registry ----------------------------------------------------------
 // Each tab: fetch() loads data, paint(el, data, ctx) renders into the tab body.
@@ -20,18 +20,14 @@ const TABS = [
 
 // ---- overview tab ----------------------------------------------------------
 
-function statCard(value, label) {
-  return `<div class="stat-card"><div class="stat-value">${value}</div>` +
-    `<div class="stat-label">${U.esc(label)}</div></div>`;
-}
 
 function paintOverview(el, h) {
   let html = '<div class="stat-grid">' +
-    statCard(U.fmtInt(h.paper_count), 'Papers') +
-    statCard(U.fmtInt(h.vector_count), 'Vectors') +
-    statCard(h.embedding_dimension ? U.fmtInt(h.embedding_dimension) : '—', 'Embedding dim') +
-    statCard(U.fmtInt(h.processing_count), 'Processing') +
-    statCard(U.fmtInt(h.failed_count), 'Failed') +
+    U.statCard(U.fmtInt(h.paper_count), 'Papers') +
+    U.statCard(U.fmtInt(h.vector_count), 'Vectors') +
+    U.statCard(h.embedding_dimension ? U.fmtInt(h.embedding_dimension) : '—', 'Embedding dim') +
+    U.statCard(U.fmtInt(h.processing_count), 'Processing') +
+    U.statCard(U.fmtInt(h.failed_count), 'Failed') +
     '</div>';
 
   if (h.config_needs_restart) {
@@ -90,7 +86,7 @@ function paintQuality(el, d) {
     });
     return;
   }
-  html += `<div class="table-wrap"><table class="table"><thead><tr><th>Paper</th><th>Issues</th></tr></thead><tbody>${
+  html += `<div class="table-wrap table-scroll"><table class="table"><thead><tr><th>Paper</th><th>Issues</th></tr></thead><tbody>${
     papers.map((p) =>
       `<tr><td><a href="#/paper/${encodeURIComponent(p.paper_id)}">${
         U.esc(p.title || p.paper_id)}</a></td><td>${
@@ -194,8 +190,10 @@ function paintIntegrity(el, k) {
 
   let html = `<div class="grid cols-3">${lists.map((l) => {
     const n = (k[l.key] || []).length;
-    return `<div class="stat-card"><div class="stat-value${n ? ' text-warn' : ''}">${
-      U.fmtInt(n)}</div><div class="stat-label">${U.esc(l.label)}</div></div>`;
+    // Clickable stat card jumps to the matching section below.
+    return `<button type="button" class="stat-card stat-link" data-jump="integrity-${l.key}"${n ? '' : ' disabled'}>` +
+      `<div class="stat-value${n ? ' text-warn' : ''}">${U.fmtInt(n)}</div>` +
+      `<div class="stat-label">${U.esc(l.label)}</div></button>`;
   }).join('')}</div>`;
 
   if (!total) {
@@ -210,25 +208,35 @@ function paintIntegrity(el, k) {
   lists.forEach((l) => {
     const items = k[l.key] || [];
     if (!items.length) return;
-    html += `<div class="card"><div class="card-head"><h3>${U.esc(l.label)}</h3>${
-      U.badge(items.length, 'warn')}</div><div class="link-list">${
-      items.slice(0, 50).map((it) => {
+    html += `<div class="card" id="integrity-${l.key}"><div class="card-head"><h3>${U.esc(l.label)}</h3>${
+      U.badge(items.length, 'warn')}</div><div class="link-list scroll-box-lg">${
+      items.map((it) => {
         if (l.kind === 'papers') {
-          return `<a href="#/paper/${encodeURIComponent(it)}" class="mono small">${U.esc(it)}</a>`;
+          return `<a href="#/paper/${encodeURIComponent(it.id)}"><span>${
+            U.esc(it.title || it.id)}</span> <span class="muted mono small">${
+            U.esc(U.truncate(it.id, 8))}</span></a>`;
         }
         if (l.kind === 'figures') {
-          return `<a href="#/paper/${encodeURIComponent(it.paper_id)}" class="mono small">${
-            U.esc(it.paper_id)} · figure ${U.esc(it.figure_id)}</a>`;
+          return `<a href="#/paper/${encodeURIComponent(it.paper_id)}"><span>${
+            U.esc(it.paper_title || it.paper_id)}</span> <span class="muted mono small">${
+            U.esc(it.figure_id)}</span></a>`;
         }
         return `<span class="mono small">${U.esc(it)}</span>`;
-      }).join('')}${
-      items.length > 50 ? `<span class="muted small">… and ${U.fmtInt(items.length - 50)} more</span>` : ''
-    }</div></div>`;
+      }).join('')}</div></div>`;
   });
 
   html += `<p class="field-hint mt-3">${U.icon('alert', 14)}` +
     ' Cleanup (Maintenance tab) removes orphaned vectors, directories, and papers whose files are missing.</p>';
   el.innerHTML = html;
+
+  el.querySelectorAll('[data-jump]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const target = el.querySelector('#' + b.getAttribute('data-jump'));
+      if (!target) return;
+      const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      target.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
+    });
+  });
 }
 
 // ---- images tab ---------------------------------------------------------------

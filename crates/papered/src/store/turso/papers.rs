@@ -124,7 +124,7 @@ impl TursoStore {
         limit: usize,
         offset: usize,
     ) -> Result<(Vec<Paper>, usize)> {
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut filter = SqlFilter::new();
 
         if let Some(s) = status {
@@ -459,7 +459,7 @@ impl TursoStore {
         if paper_ids.is_empty() {
             return Ok(out);
         }
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         // One aggregate query per batch — never a per-id loop.
         for batch in paper_ids.chunks(MAX_QUERY_VARS) {
             let placeholders = placeholders(batch.len());

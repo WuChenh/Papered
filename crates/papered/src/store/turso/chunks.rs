@@ -42,7 +42,7 @@ impl TursoStore {
     }
 
     pub(crate) async fn get_sections(&self, paper_id: &str) -> Result<PaperSections> {
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut stmt = conn
             .prepare_cached(
                 "SELECT section_type, content, content_hash FROM sections WHERE paper_id = ?1",
@@ -76,7 +76,7 @@ impl TursoStore {
         if paper_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut all = Vec::new();
         for batch in paper_ids.chunks(MAX_QUERY_VARS) {
             let placeholders = placeholders(batch.len());
@@ -123,7 +123,7 @@ impl TursoStore {
         if safe_query.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let sql = format!(
             "SELECT {PAPER_COLUMNS}, fts_score(title, abstract_text, keywords, ?1) as score, \
              fts_highlight(title, abstract_text, keywords, '<mark>', '</mark>', ?1) as snippet
@@ -210,7 +210,7 @@ impl TursoStore {
     }
 
     pub(crate) async fn get_chunks(&self, paper_id: &str) -> Result<Vec<crate::chunker::Chunk>> {
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut stmt = conn
             .prepare_cached(&format!(
                 "SELECT {CHUNK_COLUMNS} FROM chunks WHERE paper_id = ?1 ORDER BY start_pos"
@@ -233,7 +233,7 @@ impl TursoStore {
         paper_id: &str,
         chunk_id: &str,
     ) -> Result<Option<crate::chunker::Chunk>> {
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut stmt = conn
             .prepare_cached(&format!(
                 "SELECT {CHUNK_COLUMNS} FROM chunks WHERE paper_id = ?1 AND id = ?2"
@@ -262,7 +262,7 @@ impl TursoStore {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut all = Vec::new();
         // The engine does not support recursive CTEs, so walk the parent chain
         // level by level: fetch the current frontier of chunks, then queue their
@@ -350,7 +350,7 @@ impl TursoStore {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut rows = conn
             .query(
                 "SELECT c.paper_id, c.path
@@ -404,7 +404,7 @@ impl TursoStore {
         if safe_query.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut all_hits = Vec::new();
         for batch in paper_ids.chunks(MAX_QUERY_VARS) {
             let placeholders = placeholders(batch.len());
@@ -446,7 +446,7 @@ impl TursoStore {
         if safe_query.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let sql = format!(
             "SELECT {CHUNK_COLUMNS}, fts_score(c.content, ?1) as score
              FROM chunks c

@@ -42,6 +42,12 @@ pub struct TursoStore {
     /// active connections. This field is intentionally not read directly.
     _db: Arc<turso::Database>,
     pub(crate) conn: tokio::sync::Mutex<turso::Connection>,
+    /// Dedicated connection for read-only queries. Long write transactions
+    /// (chunk/FTS/vector upserts during indexing) hold `conn` for seconds at a
+    /// time; routing reads here keeps API reads responsive instead of queueing
+    /// behind the writer. `None` for `:memory:` databases, which are
+    /// per-connection — in-memory stores share the write connection.
+    pub(crate) read_conn: Option<tokio::sync::Mutex<turso::Connection>>,
 }
 
 impl TursoStore {
@@ -59,12 +65,24 @@ impl TursoStore {
             .await
             .db("turso pragma")?;
 
+        // Second connection for read-only queries (see `read_conn` field docs).
+        let read_conn = if path_str == ":memory:" {
+            None
+        } else {
+            let rc = db.connect().db("turso read connect")?;
+            rc.execute_batch("PRAGMA foreign_keys = ON;")
+                .await
+                .db("turso pragma")?;
+            Some(tokio::sync::Mutex::new(rc))
+        };
+
         Self::init_tables(&conn).await?;
         Self::seed_prompts(&conn).await?;
 
         Ok(Self {
             _db: Arc::new(db),
             conn: tokio::sync::Mutex::new(conn),
+            read_conn,
         })
     }
 
@@ -318,6 +336,15 @@ impl TursoStore {
     // Helpers
     // =============================================================================
 
+    /// Lock the read connection, falling back to the write connection for
+    /// `:memory:` stores (see `read_conn` field docs).
+    async fn read_lock(&self) -> tokio::sync::MutexGuard<'_, turso::Connection> {
+        match &self.read_conn {
+            Some(rc) => rc.lock().await,
+            None => self.conn.lock().await,
+        }
+    }
+
     /// `prepare_cached` + `execute`, discarding rows; `ctx` labels errors.
     async fn exec(&self, sql: &str, params: Vec<turso::Value>, ctx: &'static str) -> Result<()> {
         let conn = self.conn.lock().await;
@@ -334,7 +361,7 @@ impl TursoStore {
         ctx: &'static str,
         parse: impl Fn(&turso::Row) -> Result<T>,
     ) -> Result<Option<T>> {
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut stmt = conn.prepare_cached(sql).await.db(ctx)?;
         let mut rows = stmt.query(params).await.db(ctx)?;
         match rows.next().await.db(ctx)? {
@@ -351,7 +378,7 @@ impl TursoStore {
         ctx: &'static str,
         parse: impl Fn(&turso::Row) -> Result<T>,
     ) -> Result<Vec<T>> {
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut stmt = conn.prepare_cached(sql).await.db(ctx)?;
         let mut rows = stmt.query(params).await.db(ctx)?;
         let mut out = Vec::new();
@@ -368,7 +395,7 @@ impl TursoStore {
         params: Vec<turso::Value>,
         ctx: &'static str,
     ) -> Result<usize> {
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut stmt = conn.prepare_cached(sql).await.db(ctx)?;
         let mut rows = stmt.query(params).await.db(ctx)?;
         if let Some(row) = rows.next().await.db(ctx)? {

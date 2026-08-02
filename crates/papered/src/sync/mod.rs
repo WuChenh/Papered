@@ -254,14 +254,7 @@ pub async fn sync_library<S: LibrarySource>(
             paper.file_path = Some(path.to_string_lossy().into_owned());
             paper.status = PaperStatus::Processing;
 
-            let job = IndexJob {
-                paper_id: paper.id.clone(),
-                file_path: path.to_string_lossy().into_owned(),
-                is_reindex: false,
-                retry_count: 0,
-                sections_only: false,
-                reembed_only: false,
-            };
+            let job = IndexJob::new(paper.id.clone(), path.to_string_lossy().into_owned());
 
             if import_tx.send(job).await.is_ok() {
                 if !insert_paper_tracking(store, &paper, &item_id, &mut stats).await {

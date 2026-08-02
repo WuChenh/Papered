@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/WuChenh/papered/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/WuChenh/papered/main/install.sh | PAPERED_VERSION=v0.2.0 sh
+#   curl -fsSL https://raw.githubusercontent.com/WuChenh/papered/main/install.sh | PAPERED_VERSION=v0.2.1 sh
 #
 # Installs `papered` and `papered-daemon` from the latest GitHub Release.
 # Override target directory with INSTALL_DIR (default: ~/.local/bin).

@@ -201,14 +201,9 @@ impl AppState {
                     } else {
                         (paper.file_path.clone().unwrap_or_default(), true, false)
                     };
-                    let job = papered::util::IndexJob {
-                        paper_id: paper.id.clone(),
-                        file_path,
-                        is_reindex: false,
-                        retry_count: 0,
-                        sections_only,
-                        reembed_only,
-                    };
+                    let mut job = papered::util::IndexJob::new(paper.id.clone(), file_path);
+                    job.sections_only = sections_only;
+                    job.reembed_only = reembed_only;
                     if self.import_tx.send(job).await.is_ok() {
                         total_queued += 1;
                     } else {

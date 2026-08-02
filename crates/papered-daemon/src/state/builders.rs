@@ -170,14 +170,12 @@ pub(crate) async fn queue_paper_for_indexing(
     paper.status = PaperStatus::Processing;
     paper.file_path = file_path;
     store.insert_paper(paper).await.map_err(map_err)?;
-    let job = papered::util::IndexJob {
-        paper_id: paper.id.clone(),
-        file_path: paper.file_path.clone().unwrap_or_default(),
-        is_reindex: false,
-        retry_count: 0,
-        sections_only,
-        reembed_only,
-    };
+    let mut job = papered::util::IndexJob::new(
+        paper.id.clone(),
+        paper.file_path.clone().unwrap_or_default(),
+    );
+    job.sections_only = sections_only;
+    job.reembed_only = reembed_only;
     import_tx.send(job).await.map_err(|_| {
         service_unavailable(ERR_QUEUE_CLOSED, "Indexing queue is closed".to_string())
     })?;

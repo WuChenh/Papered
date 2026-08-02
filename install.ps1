@@ -2,7 +2,7 @@
 #
 # Usage (PowerShell):
 #   irm https://raw.githubusercontent.com/WuChenh/papered/main/install.ps1 | iex
-#   $env:PAPERED_VERSION="v0.2.0"; irm https://raw.githubusercontent.com/WuChenh/papered/main/install.ps1 | iex
+#   $env:PAPERED_VERSION="v0.2.1"; irm https://raw.githubusercontent.com/WuChenh/papered/main/install.ps1 | iex
 #
 # Installs `papered.exe` and `papered-daemon.exe` from the latest GitHub Release
 # into %LOCALAPPDATA%\papered (user-scope) and adds it to the user PATH.

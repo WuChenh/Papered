@@ -8,26 +8,29 @@ impl TursoStore {
     // Health check
     // ========================================================================
 
-    pub(crate) async fn papers_with_missing_files(&self) -> Result<Vec<String>> {
-        let candidates: Vec<(String, String)> = self
+    pub(crate) async fn papers_with_missing_files(
+        &self,
+    ) -> Result<Vec<crate::store::vector::PaperRef>> {
+        let candidates: Vec<(String, String, String)> = self
             .query_all(
-                "SELECT id, file_path FROM papers WHERE file_path IS NOT NULL AND file_path != ''",
+                "SELECT id, title, file_path FROM papers WHERE file_path IS NOT NULL AND file_path != ''",
                 Vec::new(),
                 "missing files",
                 |row| {
                     Ok((
                         get_text(&row.get_value(0)?).unwrap_or_default(),
                         get_text(&row.get_value(1)?).unwrap_or_default(),
+                        get_text(&row.get_value(2)?).unwrap_or_default(),
                     ))
                 },
             )
             .await?;
 
         let mut missing = Vec::new();
-        for (id, path) in candidates {
+        for (id, title, path) in candidates {
             let exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
             if !exists {
-                missing.push(id);
+                missing.push(crate::store::vector::PaperRef { id, title });
             }
         }
         Ok(missing)
@@ -63,7 +66,7 @@ impl TursoStore {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut stmt = conn
             .prepare_cached("SELECT id FROM papers")
             .await

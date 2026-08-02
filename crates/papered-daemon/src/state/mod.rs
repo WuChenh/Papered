@@ -26,6 +26,12 @@ use tokio_util::sync::CancellationToken;
 pub(crate) const MAX_RETRIES: u32 = 3;
 pub(crate) const RETRY_DELAY_SECS: u64 = 10;
 
+/// Flag file recording that the indexing worker pool is paused. Its mere
+/// presence means paused, so the pause survives daemon restarts.
+pub(crate) fn index_pause_flag_path(config: &AppConfig) -> std::path::PathBuf {
+    config.data_dir.join("indexing.paused")
+}
+
 pub(crate) struct AppState {
     pub store: Arc<dyn VectorStore>,
     pub embedding: Arc<RwLock<EmbeddingClient>>,
@@ -53,6 +59,11 @@ pub(crate) struct AppState {
     pub config_needs_restart: AtomicBool,
     pub reembed_total: AtomicUsize,
     pub reembed_completed: AtomicUsize,
+    /// True while the indexing worker pool is paused (pause/resume endpoint).
+    /// Persisted in the `indexing.paused` flag file so it survives restarts.
+    /// The watch channel wakes the worker loop on resume.
+    pub indexing_paused: AtomicBool,
+    pub index_pause_tx: tokio::sync::watch::Sender<bool>,
     pub config_write_lock: Arc<tokio::sync::Mutex<()>>,
     pub lattice_client: Option<papered::lattice::LatticeClient>,
     pub zotero_client: Option<papered::zotero::ZoteroClient>,
@@ -70,6 +81,7 @@ impl AppState {
         indexer: Arc<RwLock<papered::Indexer>>,
         import_tx: tokio::sync::mpsc::Sender<papered::util::IndexJob>,
         zotero_sync_tx: tokio::sync::mpsc::Sender<ZoteroSyncRequest>,
+        indexing_paused: bool,
     ) -> Self {
         Self {
             store,
@@ -94,6 +106,8 @@ impl AppState {
             config_needs_restart: AtomicBool::new(false),
             reembed_total: AtomicUsize::new(0),
             reembed_completed: AtomicUsize::new(0),
+            indexing_paused: AtomicBool::new(indexing_paused),
+            index_pause_tx: tokio::sync::watch::channel(indexing_paused).0,
             config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
             lattice_client: papered::lattice::LatticeClient::new().ok(),
             zotero_client: Some(papered::zotero::ZoteroClient::new()),
@@ -150,6 +164,12 @@ impl AppState {
             tracing::info!(
                 "Zotero sync scope changed (collections={collections_changed}, recursive={recursive_changed}) — resetting last_sync_version to 0 for full re-sync"
             );
+            if let Err(e) = effective_new_config.save() {
+                tracing::warn!(
+                    "Failed to persist Zotero last_sync_version reset to config: {}",
+                    e
+                );
+            }
         }
 
         *self.config.write().await = effective_new_config.clone();
@@ -212,6 +232,25 @@ impl AppState {
             );
             self.config_needs_restart.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// Mutate the active config under the write lock, propagate side-effects,
+    /// and persist. Returns the saved config.
+    ///
+    /// Shared by the Lattice and Zotero sync-scope endpoints, which both
+    /// follow: lock → clone → mutate → apply → save.
+    pub(crate) async fn update_config_saved(
+        self: &Arc<Self>,
+        mutate: impl FnOnce(&mut AppConfig),
+    ) -> Result<AppConfig, papered::PaperedError> {
+        let _guard = self.config_write_lock.lock().await;
+        let old_config = self.config.read().await.clone();
+        let mut new_config = old_config.clone();
+        mutate(&mut new_config);
+        self.apply_config_update(&new_config, &old_config).await;
+        let updated_config = self.config.read().await.clone();
+        updated_config.save()?;
+        Ok(updated_config)
     }
 }
 
@@ -289,6 +328,7 @@ pub(crate) async fn test_app_state() -> (Arc<AppState>, tempfile::TempDir) {
         indexer,
         import_tx,
         zotero_sync_tx,
+        false,
     ));
     (state, temp_dir)
 }

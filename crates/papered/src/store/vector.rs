@@ -15,6 +15,22 @@ use serde::{Deserialize, Serialize};
 /// retain `#[async_trait]` (which boxes the future) to preserve dyn-compatibility.
 /// If the codebase ever moves to static dispatch (`impl VectorStore` generics
 /// only), this attribute can be removed.
+/// A paper reference carrying both id and title, for health-check listings
+/// that need to display identifiable papers rather than bare UUIDs.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PaperRef {
+    pub id: String,
+    pub title: String,
+}
+
+/// A figure whose stored image file is missing from disk.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MissingFigureImage {
+    pub paper_id: String,
+    pub figure_id: String,
+    pub paper_title: String,
+}
+
 #[async_trait]
 pub trait VectorStore: Send + Sync {
     // === Vector operations ===
@@ -319,13 +335,13 @@ pub trait VectorStore: Send + Sync {
     }
     // === Health check ===
 
-    async fn papers_without_vectors(&self) -> Result<Vec<String>>;
+    async fn papers_without_vectors(&self) -> Result<Vec<PaperRef>>;
     async fn orphaned_vector_paper_ids(&self) -> Result<Vec<String>>;
-    async fn papers_with_missing_files(&self) -> Result<Vec<String>>;
+    async fn papers_with_missing_files(&self) -> Result<Vec<PaperRef>>;
     async fn figures_with_missing_images(
         &self,
         data_dir: &std::path::Path,
-    ) -> Result<Vec<(String, String)>>;
+    ) -> Result<Vec<MissingFigureImage>>;
     /// Find directories under data_dir/papers that are not referenced by any paper in the DB.
     async fn orphaned_data_directories(&self, data_dir: &std::path::Path) -> Result<Vec<String>>;
 

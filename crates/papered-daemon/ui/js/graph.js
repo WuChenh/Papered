@@ -3,9 +3,9 @@
 // dependency. Edge weights come from keyword overlap + shared biological
 // entities (see crates/papered/src/search/graph.rs).
 
-import * as U from './util.js?v=2';
-import { API } from './api.js?v=2';
-import { route } from './router.js?v=2';
+import * as U from './util.js?v=1';
+import { API } from './api.js?v=1';
+import { route } from './router.js?v=1';
 
 // ---- module state (restored on re-entry) --------------------------------
 
@@ -17,6 +17,10 @@ const state = {
   selected: null,  // selected node id
   expanded: new Set(), // timeline lane labels with the card cap lifted
 };
+
+// "All papers" sends the backend's max supported graph size; the daemon caps
+// at MAX_RESULT_LIMIT (1000) so larger values just mean "everything indexed".
+const GRAPH_ALL_LIMIT = 1000;
 
 let gen = 0;             // generation counter; stale async callbacks bail out
 let rafId = 0;           // active network animation frame
@@ -30,8 +34,14 @@ let libraryPromise = null; // in-flight library fetch (deduped)
 
 // ---- shared helpers -----------------------------------------------------
 
-function nodeRadius(n) {
-  return 5 + Math.min(8, (n.deg || 0) * 1.3);
+// Node radius relative to the most-connected node in the CURRENT graph
+// (0..1 → 4..9px), with a sqrt curve so mid-degree nodes stay readable.
+// Scaling by the graph's max degree keeps the visual density stable when
+// "Links/paper" is raised — nodes express relative importance, not an
+// absolute count that inflates everyone at once.
+function nodeRadius(n, maxDeg) {
+  const t = maxDeg > 0 ? Math.min(1, (n.deg || 0) / maxDeg) : 0;
+  return 4 + 5 * Math.sqrt(t);
 }
 
 // Map a publication year to a color on a cool→warm (old→new) scale.
@@ -232,6 +242,7 @@ function renderNetwork(canvas, graph) {
     .map((e) => ({ ...e, s: byId.get(e.source), t: byId.get(e.target) }))
     .filter((e) => e.s && e.t);
   edges.forEach((e) => { e.s.deg++; e.t.deg++; });
+  const maxDeg = Math.max(1, ...nodes.map((n) => n.deg || 0));
 
   // Year range for the color scale (undated papers excluded from min/max).
   const datedYears = nodes.map((n) => n.year).filter((y) => y != null);
@@ -245,8 +256,8 @@ function renderNetwork(canvas, graph) {
   const nodeMarkup = nodes.map((n) => {
     const c = yearColor(n.year, minYear, maxYear) || UNDATED_COLOR;
     return '<g class="g-node" data-id="' + U.esc(n.id) + '">' +
-    '<circle class="g-dot" r="' + nodeRadius(n).toFixed(1) + '" fill="' + c + '"></circle>' +
-    '<text class="g-label" dy="-' + (nodeRadius(n) + 4).toFixed(1) + '">' +
+    '<circle class="g-dot" r="' + nodeRadius(n, maxDeg).toFixed(1) + '" fill="' + c + '"></circle>' +
+    '<text class="g-label" dy="-' + (nodeRadius(n, maxDeg) + 4).toFixed(1) + '">' +
     U.esc(U.truncate(n.title || 'Untitled', 32)) + '</text></g>';
   }).join('');
 
@@ -277,6 +288,26 @@ function renderNetwork(canvas, graph) {
   const vt = { x: 0, y: 0, k: 1 };
   function applyView() {
     zoomG.setAttribute('transform', 'translate(' + vt.x + ',' + vt.y + ') scale(' + vt.k + ')');
+  }
+  // Fit the whole graph into the viewport with a margin. Called once the
+  // force simulation settles, so the initial view is never "too big or too
+  // small" — the user then fine-tunes from a sensible starting scale.
+  function fitView() {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodes.forEach((n) => {
+      if (n.x < minX) minX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.x > maxX) maxX = n.x;
+      if (n.y > maxY) maxY = n.y;
+    });
+    const spanX = maxX - minX || 1;
+    const spanY = maxY - minY || 1;
+    const pad = 60;
+    const k = Math.min((W - pad * 2) / spanX, (H - pad * 2) / spanY, 2);
+    vt.k = Math.max(0.05, k);
+    vt.x = W / 2 - (minX + maxX) / 2 * vt.k;
+    vt.y = H / 2 - (minY + maxY) / 2 * vt.k;
+    applyView();
   }
   // Center the view on a node (graph-search locate) without changing zoom.
   view.reveal = (id) => {
@@ -339,6 +370,18 @@ function renderNetwork(canvas, graph) {
     }
     alpha *= 0.994;
   }
+
+  // Settle the layout synchronously BEFORE the first paint. Rendering every
+  // tick via requestAnimationFrame would show ~650 frames of jitter — about
+  // 10s of shaking at 60fps for 521 nodes. The full simulation only costs
+  // ~250ms (521 nodes) or ~900ms ("All", 1000 nodes), so the "Building
+  // graph…" spinner covers it and the graph appears already settled.
+  while (alpha > 0.02) tick();
+  updatePositions();
+  fitView();
+
+  // Only interactive drags re-activate the animation, so nudging a node
+  // around pulls its neighbors with it.
   function frame() {
     if (alpha > 0.02) {
       tick();
@@ -348,8 +391,6 @@ function renderNetwork(canvas, graph) {
       updatePositions();
     }
   }
-  updatePositions();
-  rafId = requestAnimationFrame(frame);
 
   // ---- interaction: drag nodes, pan background, wheel zoom, click select ----
   function toGraph(clientX, clientY) {
@@ -409,8 +450,11 @@ function renderNetwork(canvas, graph) {
     e.preventDefault();
     const rect = svg.getBoundingClientRect();
     const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    const nk = Math.max(0.25, Math.min(4, vt.k * factor));
+    // Scale the factor by the actual delta so trackpads (many small deltas)
+    // and mouse wheels (few large ones) zoom at a comparable rate.
+    const delta = (e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY) || 0;
+    const factor = Math.exp(-delta * 0.0012);
+    const nk = Math.max(0.03, Math.min(8, vt.k * factor));
     vt.x = sx - (sx - vt.x) * (nk / vt.k);
     vt.y = sy - (sy - vt.y) * (nk / vt.k);
     vt.k = nk;
@@ -599,9 +643,11 @@ function controlsHTML() {
     '<button type="button" data-mode="' + id + '"' +
     (state.mode === id ? ' class="active" aria-pressed="true"' : ' aria-pressed="false"') +
     '>' + label + '</button>';
-  const limitOpts = [50, 100, 200, 500].map((n) =>
-    '<option value="' + n + '"' + (state.limit === n ? ' selected' : '') + '>' + n + '</option>'
-  ).join('');
+  const limitOpts = [50, 100, 200, 500, 'all'].map((n) => {
+    const v = n === 'all' ? GRAPH_ALL_LIMIT : n;
+    const label = n === 'all' ? 'All' : String(n);
+    return '<option value="' + v + '"' + (state.limit === v ? ' selected' : '') + '>' + label + '</option>';
+  }).join('');
   const degreeOpts = [2, 3, 4, 5, 8, 12, 16, 20].map((n) =>
     '<option value="' + n + '"' + (state.degree === n ? ' selected' : '') + '>' + n + '</option>'
   ).join('');

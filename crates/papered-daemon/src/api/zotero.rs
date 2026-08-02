@@ -140,7 +140,7 @@ pub async fn zotero_sync_status(
 
     Ok(Json(ZoteroSyncStatusResponse {
         sync_id: job.id.clone(),
-        status: status.to_string(),
+        status,
         report: job.report.clone(),
     }))
 }
@@ -181,15 +181,15 @@ pub async fn zotero_sync_collections(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ZoteroSyncCollectionsRequest>,
 ) -> ApiResult<ZoteroSyncCollectionsResponse> {
-    let _guard = state.config_write_lock.lock().await;
-    let old_config = state.config.read().await.clone();
-    let mut new_config = old_config.clone();
-    new_config.zotero_sync.collection_keys = req.collection_keys.clone();
-    new_config.zotero_sync.recursive_collections = req.recursive_collections;
-    new_config
-        .save()
+    let keys = req.collection_keys.clone();
+    let recursive = req.recursive_collections;
+    state
+        .update_config_saved(|config| {
+            config.zotero_sync.collection_keys = keys;
+            config.zotero_sync.recursive_collections = recursive;
+        })
+        .await
         .map_err(|e| internal_error(e.to_string()))?;
-    state.apply_config_update(&new_config, &old_config).await;
     Ok(Json(ZoteroSyncCollectionsResponse {
         collection_keys: req.collection_keys,
         recursive_collections: req.recursive_collections,

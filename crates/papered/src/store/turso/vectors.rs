@@ -75,7 +75,7 @@ impl VectorStore for TursoStore {
         top_k: usize,
         min_score: f32,
     ) -> Result<Vec<VectorSearchResult>> {
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let query_str = vector_to_sql(query_vector);
         let max_distance = (1.0 - min_score) as f64;
 
@@ -179,7 +179,7 @@ impl VectorStore for TursoStore {
     ) -> Result<Vec<(Vec<f32>, String)>> {
         use super::vector_from_text;
 
-        let conn = self.conn.lock().await;
+        let conn = self.read_lock().await;
         let mut params: Vec<turso::Value> = vec![turso::Value::Text(paper_id.to_string())];
         let mut filter = SqlFilter::new();
 
@@ -210,15 +210,19 @@ impl VectorStore for TursoStore {
         Ok(results)
     }
 
-    async fn papers_without_vectors(&self) -> Result<Vec<String>> {
+    async fn papers_without_vectors(&self) -> Result<Vec<crate::store::vector::PaperRef>> {
         self.query_all(
-            "SELECT id FROM papers WHERE id NOT IN (SELECT DISTINCT paper_id FROM vectors)",
+            "SELECT id, title FROM papers WHERE id NOT IN (SELECT DISTINCT paper_id FROM vectors)",
             Vec::new(),
             "papers without vectors",
-            |row| Ok(get_text(&row.get_value(0)?)),
+            |row| {
+                Ok(crate::store::vector::PaperRef {
+                    id: get_text(&row.get_value(0)?).unwrap_or_default(),
+                    title: get_text(&row.get_value(1)?).unwrap_or_default(),
+                })
+            },
         )
         .await
-        .map(|ids| ids.into_iter().flatten().collect())
     }
 
     async fn orphaned_vector_paper_ids(&self) -> Result<Vec<String>> {
@@ -555,7 +559,7 @@ impl VectorStore for TursoStore {
     async fn figures_with_missing_images(
         &self,
         data_dir: &std::path::Path,
-    ) -> Result<Vec<(String, String)>> {
+    ) -> Result<Vec<crate::store::vector::MissingFigureImage>> {
         TursoStore::figures_with_missing_images(self, data_dir).await
     }
 
@@ -567,7 +571,7 @@ impl VectorStore for TursoStore {
     // Health & maintenance — delegates to health.rs
     // ========================================================================
 
-    async fn papers_with_missing_files(&self) -> Result<Vec<String>> {
+    async fn papers_with_missing_files(&self) -> Result<Vec<crate::store::vector::PaperRef>> {
         TursoStore::papers_with_missing_files(self).await
     }
 

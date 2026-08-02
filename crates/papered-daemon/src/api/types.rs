@@ -431,12 +431,42 @@ pub struct ImportQueueItem {
     pub paper_id: String,
     pub file_path: String,
     pub status: String,
+    /// Paper title; absent when extraction has not produced one yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Indexing failure reason; present only on failed entries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportQueueResponse {
+    /// True while the indexing worker pool is paused via the pause endpoint.
+    pub paused: bool,
+    pub items: Vec<ImportQueueItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetIndexingPausedRequest {
+    pub paused: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IndexingPausedResponse {
+    pub paused: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct MissingFigureRef {
     pub paper_id: String,
     pub figure_id: String,
+    pub paper_title: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PaperRefResponse {
+    pub id: String,
+    pub title: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -491,13 +521,15 @@ pub struct HealthResponse {
     pub reembed_total: usize,
     pub processing_count: usize,
     pub failed_count: usize,
+    /// True when the indexing worker pool is paused (see `POST /api/v1/index-queue/pause`).
+    pub indexing_paused: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct KbHealthResponse {
-    pub papers_without_vectors: Vec<String>,
+    pub papers_without_vectors: Vec<PaperRefResponse>,
     pub orphaned_vector_paper_ids: Vec<String>,
-    pub papers_with_missing_files: Vec<String>,
+    pub papers_with_missing_files: Vec<PaperRefResponse>,
     pub figures_with_missing_images: Vec<MissingFigureRef>,
     pub orphaned_directories: Vec<String>,
 }
