@@ -21,7 +21,6 @@ axum = { workspace = true, features = ["multipart"] }
 tower-http = { workspace = true, features = ["limit"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-chrono = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

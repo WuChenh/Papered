@@ -7,11 +7,14 @@ use papered::error::Result;
 /// match unrelated processes whose command line happens to contain the daemon
 /// binary name (e.g. a `bash -c` wrapper that spawned it).
 pub fn stop_daemon() {
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/IM", "papered-daemon.exe"])
             .status();
-    } else if let Some(pid) = papered::util::process::running_daemon_pid() {
+    }
+    #[cfg(not(windows))]
+    if let Some(pid) = papered::util::process::running_daemon_pid() {
         unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
     } else {
         let _ = std::process::Command::new("pkill")
@@ -83,7 +86,6 @@ pub async fn handle_stop() -> Result<()> {
             .args(["/F", "/IM", "papered-daemon.exe"])
             .status();
     }
-
     // A SIGKILLed daemon never got to remove these; a gracefully-stopped one
     // already did (remove_file on a missing file is a no-op error, ignored).
     let _ = std::fs::remove_file(&pid_file);
@@ -103,6 +105,7 @@ pub async fn handle_reset(force: bool, all: bool) -> Result<()> {
     // stale -wal/-shm files and a Locking error on the next start. Give it
     // the same bounded grace as `papered stop`, then SIGKILL leftovers.
     wait_for_daemon_stop(std::time::Duration::from_secs(12)).await;
+    #[cfg(unix)]
     if !daemon_fully_stopped()
         && let Some(pid) = papered::util::process::running_daemon_pid()
     {

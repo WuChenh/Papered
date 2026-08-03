@@ -439,7 +439,36 @@ async fn async_main() -> papered::error::Result<()> {
                 )));
             }
         } else {
-            println!("{} {}", "Daemon PID:".cyan(), child.id());
+            // Wait until the daemon has registered (its RegistrationGuard
+            // writes the PID file early in startup) before returning.
+            // Returning right after spawn would misreport twice over:
+            // `papered stop` run in the not-yet-registered window falsely
+            // reports "Daemon is not running", and a daemon that dies during
+            // startup (e.g. another instance already running) would be
+            // reported as a successful start.
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            loop {
+                if let Some(status) = child.try_wait().map_err(PaperedError::Io)? {
+                    let code = status.code().unwrap_or(1);
+                    return Err(PaperedError::unknown(format!(
+                        "Daemon exited with code {code} during startup. \
+                         Check the daemon log at {}",
+                        daemon_log_file().display()
+                    )));
+                }
+                if papered::util::process::running_daemon_pid() == Some(child.id()) {
+                    println!("{} {}", "Daemon PID:".cyan(), child.id());
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    eprintln!(
+                        "{}",
+                        "Daemon has not registered within 30s — it may still be starting.".yellow()
+                    );
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
             std::thread::spawn(move || {
                 let _ = child.wait();
             });

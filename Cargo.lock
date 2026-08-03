@@ -3030,7 +3030,6 @@ version = "0.2.1"
 dependencies = [
  "async-trait",
  "axum",
- "chrono",
  "dirs",
  "futures-util",
  "notify",
