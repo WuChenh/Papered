@@ -95,6 +95,10 @@ pub trait VectorStore: Send + Sync {
     async fn paper_count(&self) -> Result<usize>;
     async fn count_papers_by_status(&self, status: &str) -> Result<usize>;
     async fn delete_paper(&self, paper_id: &str) -> Result<()>;
+    /// Delete many papers in a single transaction. Cascaded deletes (chunks,
+    /// figures, translations, vectors) hit the tantivy-backed FTS index once
+    /// per commit; batching N papers collapses N commits into one.
+    async fn delete_papers(&self, paper_ids: &[&str]) -> Result<()>;
     async fn update_paper_status(
         &self,
         paper_id: &str,

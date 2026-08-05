@@ -276,6 +276,34 @@ impl TursoStore {
         .await
     }
 
+    /// Delete many papers as batched `DELETE ... WHERE id IN (...)` statements.
+    /// Each statement auto-commits once, so the tantivy-backed FTS cascade
+    /// (chunks, figures, translations) hits one commit per statement instead
+    /// of one per paper. An explicit transaction is deliberately avoided:
+    /// libsql's FTS Drop hook asserts on cascade flushes inside manual
+    /// transactions (turso_core 0.7.2 `index_method/fts.rs` "transaction
+    /// already committed, cannot flush").
+    pub(crate) async fn delete_papers(&self, paper_ids: &[&str]) -> Result<()> {
+        // Keep well under libsql's 999 host-parameter limit.
+        const MAX_IDS_PER_STMT: usize = 500;
+        for chunk in paper_ids.chunks(MAX_IDS_PER_STMT) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let placeholders: Vec<String> = (1..=chunk.len()).map(|i| format!("?{i}")).collect();
+            let sql = format!(
+                "DELETE FROM papers WHERE id IN ({})",
+                placeholders.join(", ")
+            );
+            let params: Vec<turso::Value> = chunk
+                .iter()
+                .map(|id| turso::Value::Text(id.to_string()))
+                .collect();
+            self.exec(&sql, params, "delete papers batch").await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn update_paper_status(
         &self,
         paper_id: &str,

@@ -135,6 +135,11 @@ pub async fn find_duplicate_groups(
 pub async fn cleanup_health(State(state): State<Arc<AppState>>) -> ApiResult<CleanupResponse> {
     let mut removed = Vec::new();
     let mut metadata_only: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Collect stale ids while paging, then batch-delete once. Deleting inside
+    // the paging loop both shifts OFFSET pagination (rows get skipped) and
+    // commits the FTS cascade once per paper — a batched DELETE IN (...) folds
+    // N papers into one tantivy commit.
+    let mut stale_ids: Vec<String> = Vec::new();
     let mut pager = PaperPager::new(&state.store, 1000);
     while let Some(batch) = pager.next_batch().await.map_err(map_err)? {
         for paper in &batch {
@@ -142,13 +147,15 @@ pub async fn cleanup_health(State(state): State<Arc<AppState>>) -> ApiResult<Cle
                 metadata_only.insert(paper.id.clone());
             }
             if paper.status != PaperStatus::Indexed {
-                if let Err(e) = state.store.delete_paper(&paper.id).await {
-                    tracing::warn!("Failed to delete stale paper {}: {}", paper.id, e);
-                } else {
-                    removed.push(paper.id.clone());
-                }
+                stale_ids.push(paper.id.clone());
             }
         }
+    }
+    let stale_ids: Vec<&str> = stale_ids.iter().map(String::as_str).collect();
+    if let Err(e) = state.store.delete_papers(&stale_ids).await {
+        tracing::warn!("Failed to delete stale papers in batch: {}", e);
+    } else {
+        removed.extend(stale_ids.iter().map(|s| s.to_string()));
     }
     let without_vectors = state
         .store
@@ -156,14 +163,15 @@ pub async fn cleanup_health(State(state): State<Arc<AppState>>) -> ApiResult<Cle
         .await
         .map_err(map_err)?;
     let removed_set: std::collections::HashSet<String> = removed.iter().cloned().collect();
-    for pr in &without_vectors {
-        if !removed_set.contains(&pr.id) && !metadata_only.contains(&pr.id) {
-            if let Err(e) = state.store.delete_paper(&pr.id).await {
-                tracing::warn!("Failed to delete paper without vectors {}: {}", pr.id, e);
-            } else {
-                removed.push(pr.id.clone());
-            }
-        }
+    let stray_ids: Vec<&str> = without_vectors
+        .iter()
+        .filter(|pr| !removed_set.contains(&pr.id) && !metadata_only.contains(&pr.id))
+        .map(|pr| pr.id.as_str())
+        .collect();
+    if let Err(e) = state.store.delete_papers(&stray_ids).await {
+        tracing::warn!("Failed to delete papers without vectors in batch: {}", e);
+    } else {
+        removed.extend(stray_ids.iter().map(|s| s.to_string()));
     }
     let orphan_ids = state
         .store
@@ -240,9 +248,6 @@ pub async fn cleanup_health(State(state): State<Arc<AppState>>) -> ApiResult<Cle
         removed_figures += prune_stale_figures_for_paper(&state.store, &data_dir, &paper_id).await;
     }
 
-    if let Err(e) = state.store.optimize().await {
-        tracing::warn!("Turso optimize after cleanup failed: {}", e);
-    }
     tracing::info!(
         "Health cleanup removed {} papers, {} orphan vectors, {} orphaned directories, {} stale figures",
         removed.len(),

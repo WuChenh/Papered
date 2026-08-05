@@ -146,6 +146,12 @@ impl VectorStore for MockVectorStore {
         self.comments.lock().unwrap().remove(paper_id);
         Ok(())
     }
+    async fn delete_papers(&self, paper_ids: &[&str]) -> Result<()> {
+        for id in paper_ids {
+            self.delete_paper(id).await?;
+        }
+        Ok(())
+    }
     async fn update_paper_status(
         &self,
         paper_id: &str,

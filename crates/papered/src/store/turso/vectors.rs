@@ -306,6 +306,10 @@ impl VectorStore for TursoStore {
         TursoStore::delete_paper(self, paper_id).await
     }
 
+    async fn delete_papers(&self, paper_ids: &[&str]) -> Result<()> {
+        TursoStore::delete_papers(self, paper_ids).await
+    }
+
     async fn update_paper_status(
         &self,
         paper_id: &str,
@@ -1339,6 +1343,65 @@ mod tests {
         assert!(!map.contains_key("missing"));
 
         assert!(store.annotation_summaries(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_papers_batches_cascade_in_one_transaction() {
+        let db = TestDb::new("delete_papers_batch");
+        let store = TursoStore::new(db.path()).await.expect("open");
+        insert_paper_with_id(&store, "p1", "paper one").await;
+        insert_paper_with_id(&store, "p2", "paper two").await;
+        insert_paper_with_id(&store, "p3", "paper three").await;
+        store.set_paper_rating("p1", 4).await.unwrap();
+        store.add_paper_comment("p2", "note").await.unwrap();
+        store
+            .insert_chunks("p1", &chunk_markdown("p1", "# Intro\n\nbody\n"))
+            .await
+            .expect("chunks");
+        store
+            .insert_chunks("p2", &chunk_markdown("p2", "# Intro\n\nbody\n"))
+            .await
+            .expect("chunks");
+        store
+            .upsert(&[crate::store::vector::VectorRecord {
+                paper_id: "p3".to_string(),
+                content_type: "chunk".to_string(),
+                section_type: "Methodology".to_string(),
+                chunk_text: "text".to_string(),
+                vector: vec![1.0_f32, 0.0, 0.0],
+            }])
+            .await
+            .expect("vectors");
+
+        store
+            .delete_papers(&["p1", "p2"])
+            .await
+            .expect("batch delete");
+
+        assert_eq!(store.paper_count().await.unwrap(), 1, "p3 survives");
+        assert!(store.get_paper("p1").await.unwrap().is_none());
+        assert!(store.get_paper("p2").await.unwrap().is_none());
+        assert!(
+            store.get_chunks("p1").await.unwrap().is_empty(),
+            "chunks cascade"
+        );
+        assert!(
+            store.get_chunks("p2").await.unwrap().is_empty(),
+            "chunks cascade"
+        );
+        assert_eq!(
+            store.get_paper_rating("p1").await.unwrap(),
+            None,
+            "ratings cascade"
+        );
+        assert!(
+            store.list_paper_comments("p2").await.unwrap().is_empty(),
+            "comments cascade"
+        );
+
+        // Empty batch is a no-op.
+        store.delete_papers(&[]).await.expect("empty batch delete");
+        assert_eq!(store.paper_count().await.unwrap(), 1);
     }
 
     #[tokio::test]

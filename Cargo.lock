@@ -2985,7 +2985,7 @@ dependencies = [
 
 [[package]]
 name = "papered"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -3026,7 +3026,7 @@ dependencies = [
 
 [[package]]
 name = "papered-daemon"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -3053,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "papered-mcp"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "papered",
  "rmcp",
